@@ -13,7 +13,7 @@ cwd = os.getcwd()
 full_list           = os.listdir(cwd)
 model=Model()
 M=86400 #[s] in a day
-# --- 1. DATA INPUT & PROCESSING ---
+### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
 tighter_windows_instance=0.2
@@ -128,11 +128,10 @@ Groups = {
     2: [13, 14, 15, 16]  # GH2
 }
 
-
-
+#Define Model
 m = gp.Model("GHDC-PDPTW")
 
-# --- VARIABLES ---
+###VARIABLES###
 x = m.addVars(Edges, K_trucks, vtype=GRB.BINARY, name="x")
 tau = m.addVars( All_Nodes, vtype=GRB.CONTINUOUS, name="tau")
 tau_end = m.addVars(K_trucks, vtype=GRB.CONTINUOUS, name="tau_end")
@@ -158,6 +157,32 @@ y = m.addVars(K_trucks, Docks, Groups.keys(), vtype=GRB.BINARY, name="y")
 # z: Linearization variable for y*y. Relaxed to continuous [0,1] as per paper Section 3.3
 z = m.addVars(K_trucks, Docks, K_trucks, Docks, Groups.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
 
+### OBJECTIVE FUNCTION ###
+
+# Term 1: Total Travel Time (Sum over all trucks k and all edges (i,j))
+travel_cost = gp.quicksum(T[i, j] * x[i, j, k] 
+                          for k in K_trucks 
+                          for i, j in E1)
+# Term 2: Waiting time at GH queues (Before Docking)
+wait_gh_dock_cost = gp.quicksum(w_D[k, g] 
+                                for k in K_trucks 
+                                for g in Groups.keys())
+# Term 3: Waiting time at GH docks (During Service/Windows)
+wait_gh_service_cost = gp.quicksum(w_G[k, g] 
+                                   for k in K_trucks 
+                                   for g in Groups.keys())
+# Term 4: Waiting time at FF docks (During Service/Windows)
+wait_ff_cost = gp.quicksum(w_F[k, f] 
+                           for k in K_trucks 
+                           for f in Facilities.keys())
+
+m.setObjective(travel_cost + wait_gh_dock_cost + wait_gh_service_cost + wait_ff_cost, 
+               GRB.MINIMIZE)
+
+m.update()
+
+
+### CONSTRAINTS ###
 # (1) each pickup node is visited exactly once
 for i in Nodes_P:
     m.addConstr(
@@ -270,7 +295,21 @@ for g in Groups:
                     name=f"time_enter_GH_g{g}_k{k}_i{i}_j{j}"
                 )
 
-# --- CONSTRAINTS 12 to 22 ---
+# (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
+# Logic: If moving from i (outside GH g) to j (inside GH g), account for travel + waiting w_D
+for g, g_nodes in Groups.items():      # For each Ground Handler group
+    for j in g_nodes:                  # For each node belonging to this GH
+        for k in K_trucks:             # For each truck
+            for i in All_Nodes:        # Scan potential origin nodes
+                # Check valid edge AND strictly ensure i is NOT in the same GH group
+                if i != j and (i, j) in Edges and (i not in g_nodes):
+                    
+                    m.addConstr(
+                        tau[j] >= tau[i] + P[i] + T[i, j] 
+                                  - (1 - x[i, j, k]) * M 
+                                  + w_D[k, g],
+                        name=f"Eq11_GH_Arrival_Wait_{g}_{k}_{i}_{j}"
+                    )
 
 # (12) Time consistency within GH Groups
 # Ensures valid flow of time when moving between nodes inside the same Ground Handler
@@ -355,9 +394,6 @@ for g, g_nodes in Groups.items():
                 # (22) Upper Bound
                 m.addConstr(a_G[k,g] <= tau[i] + P[i] + T[i,j] + (1 - x[i,j,k])*M,
                             name=f"Eq22_ArrG_UB_{k}_{g}")
-
-
-# --- CONSTRAINTS (23 to 33) ---
 
 # (23) Departure time from GH (Lower Bound)
 # Ensures departure time >= start service of the last node served in that GH + processing
