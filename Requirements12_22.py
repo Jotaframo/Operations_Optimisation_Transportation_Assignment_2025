@@ -221,4 +221,3 @@ for g, g_nodes in Groups.items():
                             name=f"Eq22_ArrG_UB_{k}_{g}")
 
 m.update()
-print("Constraints 12-22 generated successfully.")
