@@ -19,8 +19,8 @@ M=86400 #[s] in a day
 tighter_windows_instance=0.2
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 8
-K_trucks = [1, 2] # Two trucks
+n_uld = 2
+K_trucks = [1] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
 Proc_Time = 2     # minutes
@@ -29,32 +29,15 @@ Cap_W = 10000     # kg
 Cap_L = 13.6      # meters
 Speed_kmh = 35    # km/h
 Speed_mpm = 35 / 60.0 # km per minute
-# Coordinates (DMS to Decimal Degrees)
-def dms_to_dd(d, m, s, direction='N'):
-    dd = d + m/60 + s/3600
-    if direction in ['S', 'W']: dd *= -1
-    return dd
 
-# Locations
-locs = {
-    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
-    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
-    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
-    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
-}
 
-# Centroid for Depot (Node 0) - Calculated average of above
-locs['Depot'] = (52.2905, 4.7627) 
 
 # Haversine Distance Function
 def get_dist(coord1, coord2):
-    lat1, lon1, lat2, lon2 = map(radians, [coord1[0], coord1[1], coord2[0], coord2[1]])
-    dlon = lon2 - lon1 
-    dlat = lat2 - lat1 
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a)) 
-    r = 6371 # Radius of earth in kilometers
-    return c * r
+    # coord1 and coord2 are Cartesian (x, y) points in the same units (e.g., km)
+    x1, y1 = coord1[0],coord1[1]
+    x2, y2 = coord2[0],coord2[1]
+    return sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 # --- NODE MAPPING ---
 # 0: Depot
@@ -63,8 +46,8 @@ def get_dist(coord1, coord2):
 # 9-12: Deliveries at GH1 (Corresponding to 1-4)
 # 13-16: Deliveries at GH2 (Corresponding to 5-8)
 
-Nodes_P = list(range(1, 9))
-Nodes_D = list(range(9, 17))
+Nodes_P = list(range(1, n_uld+1))
+Nodes_D = list(range(n_uld+1, 2*n_uld+1))
 All_Nodes = [0] + Nodes_P + Nodes_D
 Edges = [(i, j) for i in  All_Nodes for j in  All_Nodes if i != j]
 
@@ -77,13 +60,15 @@ W = {0: 0} # Weights
 L = {0: 0} # Lengths
 
 # Map nodes to physical locations to calc distances
-node_loc_map = {0: locs['Depot']}
+node_loc_maps = [[0,0]]
 
-for i in range(1, 5): 
-    node_loc_map[i] = locs['FF1']; node_loc_map[i+8] = locs['GH1']
-for i in range(5, 9): 
-    node_loc_map[i] = locs['FF2']; node_loc_map[i+8] = locs['GH2']
+for i in Nodes_P: 
+    node_loc_map = [0,1]
+    node_loc_maps.append(node_loc_map)
 
+for i in Nodes_D:
+    node_loc_map = [3,4]
+    node_loc_maps.append(node_loc_map)
 
 # Fill Parameters
 for i in  All_Nodes:
@@ -113,19 +98,18 @@ for i in  All_Nodes:
 
 # Calculate Travel Matrix (T_ij)
 for i, j in Edges:
-    dist_km = get_dist(node_loc_map[i], node_loc_map[j])
+    dist_km = get_dist(node_loc_maps[i], node_loc_maps[j])
     T[i,j] = dist_km / Speed_mpm
 
 # Facility and Group Sets
 # FFs (Pickups)
 Facilities = {
-    1: [1, 2, 3, 4], # FF1
-    2: [5, 6, 7, 8]  # FF2
+    1: Nodes_P, # FF1
+
 }
 # GHs (Deliveries)
 Groups = {
-    1: [9, 10, 11, 12],  # GH1
-    2: [13, 14, 15, 16]  # GH2
+    1: Nodes_D,  # GH1
 }
 
 #Define Model
