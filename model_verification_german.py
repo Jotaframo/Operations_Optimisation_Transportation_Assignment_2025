@@ -16,7 +16,7 @@ M=10000
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
-tighter_windows_instance=0.2
+tighter_windows_instance=0
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 2
@@ -25,7 +25,7 @@ Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
 Proc_Time = 2     # minutes
 Horizon = 480     # minutes
-Cap_W = 10000     # kg
+Cap_W = 10000    # kg
 Cap_L = 13.6      # meters
 Speed_kmh = 35    # km/h
 Speed_mpm = 35 / 60.0 # km per minute
@@ -49,7 +49,23 @@ def get_dist(coord1, coord2):
 Nodes_P = list(range(1, n_uld+1))
 Nodes_D = list(range(n_uld+1, 2*n_uld+1))
 All_Nodes = [0] + Nodes_P + Nodes_D
-Edges = [(i, j) for i in  All_Nodes for j in  All_Nodes if i != j]
+#Edges = [(i, j) for i in  All_Nodes for j in  All_Nodes if i != j]
+Edges = []
+for i in All_Nodes:
+    for j in All_Nodes:
+        if i == j: 
+            continue
+        # 1) Prohibir salir del depósito a un delivery: 0 -> D
+        if i == 0 and j in Nodes_D:
+            continue
+        # 2) Prohibir volver al depósito desde un pickup: P -> 0
+        if i in Nodes_P and j == 0:
+            continue
+        # 3) Prohibir saltos de delivery a pickup: D -> P
+        if i in Nodes_D and j in Nodes_P:
+            continue
+        Edges.append((i, j))
+
 
 # Parameter Dictionaries
 T = {} # Travel Time
@@ -70,6 +86,7 @@ for i in Nodes_D:
     node_loc_map = [3,4]
     node_loc_maps.append(node_loc_map)
 
+#node_loc_maps= [[0, 0], [0, 1], [0, 2], [0, 3], [1, 1.5]]
 # Fill Parameters
 for i in  All_Nodes:
     # Processing Time
@@ -93,8 +110,10 @@ for i in  All_Nodes:
         if i-n_uld in tightened_P_windows:
             D_win[i]+= 30 # Includes 30 min buffer if needed per paper????? 
     else:
-        E_win[i] = 0; D_win[i] = 480
-
+        if i in Nodes_P:
+            E_win[i] = 0; D_win[i] = 480
+        elif i in Nodes_D:
+            E_win[i] = 0; D_win[i] = 480
 
 # Calculate Travel Matrix (T_ij)
 for i, j in Edges:
@@ -318,12 +337,15 @@ for g, nodes in Groups.items(): #i and j belonging to the same GH
                             name=f"Eq12_IntraGroupTime_{i}_{j}")
 
 # (13) Vehicle End Time
-# Links the last node visited to the depot arrival time
+# Solo para nodos i con arco permitido i -> 0 (evita KeyError cuando P->0 está prohibido)
 for k in K_trucks:
-    for i in  All_Nodes:
-        if i != 0: # For all nodes going to depot
-            m.addConstr(tau_end[k] >= tau[i] + P[i] + T[i,0] - (1 - x[i, 0, k])*M,
-                        name=f"Eq13_EndTime_{k}_{i}")
+    for i in All_Nodes:
+        if i != 0 and (i, 0) in Edges:
+            m.addConstr(
+                tau_end[k] >= tau[i] + P[i] + T[i, 0] - (1 - x[i, 0, k]) * M,
+                name=f"Eq13_EndTime_{k}_{i}"
+            )
+
 
 # (14) Time Windows
 # Hard constraints on Earliest and Latest service times
@@ -442,21 +464,16 @@ for g in Groups:
             m.addConstr(-d_G[k1, g] + a_G[k2, g] + w_D[k2, g] - M * eta[k1, k2, g] <= 0,
                         name=f"C28_OverlapUB_k{k1}_k{k2}_g{g}")
 
-# (29) Dock Assignment
-# If a truck visits a GH, it must be assigned to exactly one dock.
-# RHS sums all arcs entering the GH g from outside nodes (including pickup nodes i-n)
+# (29) Dock Assignment Constraint
+# Each truck visiting GH g must be assigned exactly one dock there
 for g in Groups:
     for k in K_trucks:
         visit_from_outside = gp.quicksum(
             x[j, i, k] for i in Groups[g] for j in All_Nodes
             if (j, i) in Edges and (j not in Groups[g])
         )
-        visit_direct_pair = gp.quicksum(
-            x[i - n_uld, i, k] for i in Groups[g]
-            if (i - n_uld) in Nodes_P and ((i - n_uld), i) in Edges
-        )
         m.addConstr(
-            gp.quicksum(y[k, d, g] for d in Docks) == visit_from_outside + visit_direct_pair,
+            gp.quicksum(y[k, d, g] for d in Docks) == visit_from_outside,
             name=f"C29_AssignDock_k{k}_g{g}"
         )
 
