@@ -109,9 +109,10 @@ for i in  All_Nodes:
         E_win[i] = 0; D_win[i] = 480
 # Tightened Time Windows
 tightened_P_windows = []
-shuffled_Nodes=All_Nodes.copy()
+shuffled_Nodes=All_Nodes[1:].copy()
 random.shuffle(shuffled_Nodes)
-for i in shuffled_Nodes[:int(tighter_windows_instance*len(Nodes_P))]:
+print(shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))])
+for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
     if i in Nodes_P:
         E_win[i] = 50; D_win[i] = 150
         tightened_P_windows.append(i)

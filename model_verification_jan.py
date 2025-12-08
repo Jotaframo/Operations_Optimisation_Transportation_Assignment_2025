@@ -25,7 +25,7 @@ M=10000
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
-tighter_windows_instance=0
+tighter_windows_instance=0.2
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 2
@@ -105,7 +105,7 @@ for i in  All_Nodes:
     elif i in Nodes_D:
         W[i] = 0
         L[i] = 0
-        
+
     # Time Windows
     if i in Nodes_P:
         E_win[i] = 0; D_win[i] = 480
@@ -113,9 +113,10 @@ for i in  All_Nodes:
         E_win[i] = 0; D_win[i] = 480
 # Tightened Time Windows
 tightened_P_windows = []
-shuffled_Nodes=All_Nodes.copy()
+shuffled_Nodes=All_Nodes[1:].copy()
 random.shuffle(shuffled_Nodes)
-for i in shuffled_Nodes[:int(tighter_windows_instance*len(Nodes_P))]:
+print(shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))])
+for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
     if i in Nodes_P:
         E_win[i] = 50; D_win[i] = 150
         tightened_P_windows.append(i)
