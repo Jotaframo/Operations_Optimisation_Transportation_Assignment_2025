@@ -86,9 +86,9 @@ for i in  All_Nodes:
         
     # Time Windows
     if i in Nodes_P:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
     elif i in Nodes_D:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
 # Tightened Time Windows
 tightened_P_windows = []
 shuffled_Nodes=All_Nodes[1:].copy()

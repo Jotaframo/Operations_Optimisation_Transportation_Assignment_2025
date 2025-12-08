@@ -25,15 +25,15 @@ M=10000
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
-tighter_windows_instance=0.2
+tighter_windows_instance=0
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 2
-K_trucks = [1,2] # Two trucks
+K_trucks = [1] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
 Proc_Time = 2    # minutes
-Horizon = 480     # minutes
+Horizon = 15     # minutes
 Cap_W = 10000    # kg
 Cap_L = 13.6      # meters
 Speed_kmh = 35    # km/h
@@ -108,9 +108,9 @@ for i in  All_Nodes:
 
     # Time Windows
     if i in Nodes_P:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
     elif i in Nodes_D:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
 # Tightened Time Windows
 tightened_P_windows = []
 shuffled_Nodes=All_Nodes[1:].copy()

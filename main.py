@@ -18,6 +18,11 @@ M=86400 #[s] in a day
 
 # ULD & Truck Specs
 tighter_windows_instance=0.2
+tight_Win_P_a=50 #[min]
+tight_Win_P_d=150 #[min]
+tight_Win_D_a=200 #[min]
+tight_Win_D_d=350 #[min]
+
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 8
@@ -101,9 +106,9 @@ for i in  All_Nodes:
         
     # Time Windows
     if i in Nodes_P:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
     elif i in Nodes_D:
-        E_win[i] = 0; D_win[i] = 480
+        E_win[i] = 0; D_win[i] = Horizon
 # Tightened Time Windows
 tightened_P_windows = []
 shuffled_Nodes=All_Nodes[1:].copy()
@@ -111,10 +116,10 @@ random.shuffle(shuffled_Nodes)
 print(shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))])
 for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
     if i in Nodes_P:
-        E_win[i] = 50; D_win[i] = 150
+        E_win[i] = tight_Win_P_a; D_win[i] = tight_Win_P_d
         tightened_P_windows.append(i)
     elif i in Nodes_D:
-        E_win[i] = 200; D_win[i] = 350
+        E_win[i] = tight_Win_D_a; D_win[i] = tight_Win_D_d
         if i-n_uld in tightened_P_windows:
             D_win[i]+= 30 # Includes 30 min buffer if needed per paper????? 
 
