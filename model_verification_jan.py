@@ -547,6 +547,8 @@ m.optimize()
 if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
     print(f"[STATUS] {m.status}")
 else:
+    # Run verification of constraints 17-24
+    verify_arrival_departure_times()
     print("\n========== QUICK REPORT ==========")
     print(f"Obj: {m.objVal:.4f}\n")
 
@@ -633,6 +635,172 @@ else:
     print("==================================\n")
 # =================== END QUICK REPORT ===================
 
+
+
+#==========VERIFICATION OF CONSTRAINTS 17-24=================
+
+def verify_arrival_departure_times():
+    """
+    Verify constraints 17-24 which define arrival and departure times at facilities and groups.
+    
+    Constraints:
+    - (17-18): a_F (Facility Arrival) Lower/Upper bounds
+    - (19-20): d_F (Facility Departure) Lower/Upper bounds
+    - (21-22): a_G (Group Arrival) Lower/Upper bounds
+    - (23-24): d_G (Group Departure) Lower/Upper bounds
+    """
+    
+    print("\n" + "="*70)
+    print("VERIFICATION OF CONSTRAINTS 17-24: Arrival/Departure Times")
+    print("="*70)
+    
+    errors = []
+    
+    # ===== FACILITY ARRIVAL TIMES (Constraints 17-18) =====
+    print("\n[CONSTRAINT 17-18] Facility Arrival Time (a_F)")
+    print("-" * 70)
+    
+    for f, f_nodes in Facilities.items():
+        for k in K_trucks:
+            # Find all edges entering facility f
+            entering_edges = [(i, j) for i, j in Edges 
+                            if j in f_nodes and i not in f_nodes and val(x[i,j,k]) > 0.5]
+            
+            if entering_edges:
+                a_F_actual = val(a_F[k, f])
+                expected_arrivals = []
+                
+                for i, j in entering_edges:
+                    expected_arrival = val(tau[i]) + P[i] + T[i, j]
+                    expected_arrivals.append(expected_arrival)
+                    
+                    # Check constraint 17 (Lower Bound)
+                    c17_check = a_F_actual >= expected_arrival - TOL
+                    
+                    # Check constraint 18 (Upper Bound)
+                    c18_check = a_F_actual <= expected_arrival + TOL
+                    
+                    status = "✓ PASS" if (c17_check and c18_check) else "✗ FAIL"
+                    print(f"  Truck {k}, FF {f}: Edge ({i}->{j})")
+                    print(f"    Expected arrival: {expected_arrival:.2f}")
+                    print(f"    Actual a_F: {a_F_actual:.2f}")
+                    print(f"    Status: {status}")
+                    
+                    if not (c17_check and c18_check):
+                        errors.append(f"C17-18 FAIL: Truck {k}, FF {f}, Edge {i}->{j}")
+    
+    # ===== FACILITY DEPARTURE TIMES (Constraints 19-20) =====
+    print("\n[CONSTRAINT 19-20] Facility Departure Time (d_F)")
+    print("-" * 70)
+    
+    for f, f_nodes in Facilities.items():
+        for k in K_trucks:
+            # Find all edges leaving facility f
+            leaving_edges = [(i, j) for i, j in Edges 
+                           if i in f_nodes and j not in f_nodes and val(x[i,j,k]) > 0.5]
+            
+            if leaving_edges:
+                d_F_actual = val(d_F[k, f])
+                expected_departures = []
+                
+                for i, j in leaving_edges:
+                    # Departure time should be tau[i] + P[i] (when last node in facility finishes)
+                    expected_departure = val(tau[i]) + P[i]
+                    expected_departures.append(expected_departure)
+                    
+                    # Check constraint 19 (Lower Bound)
+                    c19_check = d_F_actual >= expected_departure - TOL
+                    
+                    # Check constraint 20 (Upper Bound)
+                    c20_check = d_F_actual <= expected_departure + TOL
+                    
+                    status = "✓ PASS" if (c19_check and c20_check) else "✗ FAIL"
+                    print(f"  Truck {k}, FF {f}: Edge ({i}->{j})")
+                    print(f"    Expected departure: {expected_departure:.2f}")
+                    print(f"    Actual d_F: {d_F_actual:.2f}")
+                    print(f"    Status: {status}")
+                    
+                    if not (c19_check and c20_check):
+                        errors.append(f"C19-20 FAIL: Truck {k}, FF {f}, Edge {i}->{j}")
+    
+    # ===== GROUP ARRIVAL TIMES (Constraints 21-22) =====
+    print("\n[CONSTRAINT 21-22] Group Arrival Time (a_G)")
+    print("-" * 70)
+    
+    for g, g_nodes in Groups.items():
+        for k in K_trucks:
+            # Find all edges entering group g
+            entering_edges = [(i, j) for i, j in Edges 
+                            if j in g_nodes and i not in g_nodes and val(x[i,j,k]) > 0.5]
+            
+            if entering_edges:
+                a_G_actual = val(a_G[k, g])
+                expected_arrivals = []
+                
+                for i, j in entering_edges:
+                    expected_arrival = val(tau[i]) + P[i] + T[i, j]
+                    expected_arrivals.append(expected_arrival)
+                    
+                    # Check constraint 21 (Lower Bound)
+                    c21_check = a_G_actual >= expected_arrival - TOL
+                    
+                    # Check constraint 22 (Upper Bound)
+                    c22_check = a_G_actual <= expected_arrival + TOL
+                    
+                    status = "✓ PASS" if (c21_check and c22_check) else "✗ FAIL"
+                    print(f"  Truck {k}, GH {g}: Edge ({i}->{j})")
+                    print(f"    Expected arrival: {expected_arrival:.2f}")
+                    print(f"    Actual a_G: {a_G_actual:.2f}")
+                    print(f"    Status: {status}")
+                    
+                    if not (c21_check and c22_check):
+                        errors.append(f"C21-22 FAIL: Truck {k}, GH {g}, Edge {i}->{j}")
+    
+    # ===== GROUP DEPARTURE TIMES (Constraints 23-24) =====
+    print("\n[CONSTRAINT 23-24] Group Departure Time (d_G)")
+    print("-" * 70)
+    
+    for g, g_nodes in Groups.items():
+        for k in K_trucks:
+            # Find all edges leaving group g
+            leaving_edges = [(i, j) for i, j in Edges 
+                           if i in g_nodes and j not in g_nodes and val(x[i,j,k]) > 0.5]
+            
+            if leaving_edges:
+                d_G_actual = val(d_G[k, g])
+                expected_departures = []
+                
+                for i, j in leaving_edges:
+                    # Departure time should be tau[i] + P[i]
+                    expected_departure = val(tau[i]) + P[i]
+                    expected_departures.append(expected_departure)
+                    
+                    # Check constraint 23 (Lower Bound)
+                    c23_check = d_G_actual >= expected_departure - TOL
+                    
+                    # Check constraint 24 (Upper Bound)
+                    c24_check = d_G_actual <= expected_departure + TOL
+                    
+                    status = "✓ PASS" if (c23_check and c24_check) else "✗ FAIL"
+                    print(f"  Truck {k}, GH {g}: Edge ({i}->{j})")
+                    print(f"    Expected departure: {expected_departure:.2f}")
+                    print(f"    Actual d_G: {d_G_actual:.2f}")
+                    print(f"    Status: {status}")
+                    
+                    if not (c23_check and c24_check):
+                        errors.append(f"C23-24 FAIL: Truck {k}, GH {g}, Edge {i}->{j}")
+    
+    # ===== SUMMARY =====
+    print("\n" + "="*70)
+    if errors:
+        print(f"VERIFICATION FAILED: {len(errors)} error(s) found")
+        for err in errors:
+            print(f"  • {err}")
+    else:
+        print("VERIFICATION PASSED: All constraints 17-24 satisfied ✓")
+    print("="*70 + "\n")
+    
+    return len(errors) == 0
 
 
 #==========TESTING CONSTRAINTS FUNCTIONS=================
