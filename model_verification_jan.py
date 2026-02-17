@@ -535,110 +535,6 @@ for g in Groups:
 
 m.update()
 
-print("tabien")
-
-# ===================== SOLVE & QUICK REPORT =====================
-TOL = 1e-6
-
-m.optimize()
-
-
-
-if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
-    print(f"[STATUS] {m.status}")
-else:
-    # Run verification of constraints 17-24
-    verify_arrival_departure_times()
-    print("\n========== QUICK REPORT ==========")
-    print(f"Obj: {m.objVal:.4f}\n")
-
-    # 1) Arcos usados x=1 (por camión)
-    print("x[i,j,k]=1 (arcos recorridos):")
-    for k in K_trucks:
-        used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
-        print(f"  Truck {k}: {used}")
-    print()
-
-    # 2) Ruta sencilla por camión (desde depot siguiendo sucesores)
-    print("Ruta (desde 0):")
-    for k in K_trucks:
-        succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
-        route = [0]
-        cur = 0
-        visited = set([0])
-        # evita bucles infinitos en caso patológico
-        for _ in range(len(All_Nodes)+2):
-            if cur in succ:
-                nxt = succ[cur]
-                route.append(nxt)
-                if nxt in visited: break
-                visited.add(nxt)
-                cur = nxt
-            else:
-                break
-        print(f"  Truck {k}: {' -> '.join(map(str, route))}")
-    print()
-
-    # 3) Tiempos por nodo (tau) y ventanas
-    print("tau por nodo (con ventanas):")
-    for i in All_Nodes:
-        t = val(tau[i])
-        e = E_win.get(i,None); d = D_win.get(i,None)
-        print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
-    print()
-
-    # 4) Tiempos/esperas en FF y GH (si aplica)
-    if Facilities:
-        print("FF (a_F, d_F, w_F):")
-        for k in K_trucks:
-            for f in Facilities.keys():
-                print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
-        print()
-    if Groups:
-        print("GH (a_G, d_G, w_D, w_G):")
-        for k in K_trucks:
-            for g in Groups.keys():
-                print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
-        print()
-
-    # 5) Asignación de muelles y precedencias activas
-    print("Asignación de muelles y[k,d,g]=1:")
-    any_y = False
-    for k in K_trucks:
-        for g in Groups.keys():
-            for d in Docks:
-                if val(y[k,d,g]) > 0.5:
-                    print(f"  k={k} -> GH {g}, dock {d}")
-                    any_y = True
-    if not any_y: print("  (ninguna)")
-    print()
-
-    print("Precedencias eta[k1,k2,g]=1:")
-    any_eta = False
-    for g in Groups.keys():
-        for k1 in K_trucks:
-            for k2 in K_trucks:
-                if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
-                    print(f"  GH {g}: k1={k1} antes de k2={k2}")
-                    any_eta = True
-    if not any_eta: print("  (ninguna)")
-    print()
-
-    # 6) Uso de capacidad (suma de pickups atendidos por camión)
-    print("Uso de capacidad por camión:")
-    for k in K_trucks:
-        weight = 0.0; length = 0.0
-        for i in Nodes_P:
-            if any(val(x[j,i,k]) > 0.5 for j in All_Nodes if (j,i) in Edges):
-                weight += W[i]; length += L[i]
-        print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
-    print("==================================\n")
-# =================== END QUICK REPORT ===================
-
-
-
-#==========VERIFICATION OF CONSTRAINTS 17-24=================
-
 def verify_arrival_departure_times():
     """
     Verify constraints 17-24 which define arrival and departure times at facilities and groups.
@@ -801,9 +697,108 @@ def verify_arrival_departure_times():
     print("="*70 + "\n")
     
     return len(errors) == 0
-
-
 #==========TESTING CONSTRAINTS FUNCTIONS=================
+
+
+print("tabien")
+
+# ===================== SOLVE & QUICK REPORT =====================
+TOL = 1e-6
+
+m.optimize()
+
+
+
+if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
+    print(f"[STATUS] {m.status}")
+else:
+    # Run verification of constraints 17-24
+    verify_arrival_departure_times()
+    print("\n========== QUICK REPORT ==========")
+    print(f"Obj: {m.objVal:.4f}\n")
+
+    # 1) Arcos usados x=1 (por camión)
+    print("x[i,j,k]=1 (arcos recorridos):")
+    for k in K_trucks:
+        used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
+        print(f"  Truck {k}: {used}")
+    print()
+
+    # 2) Ruta sencilla por camión (desde depot siguiendo sucesores)
+    print("Ruta (desde 0):")
+    for k in K_trucks:
+        succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
+        route = [0]
+        cur = 0
+        visited = set([0])
+        # evita bucles infinitos en caso patológico
+        for _ in range(len(All_Nodes)+2):
+            if cur in succ:
+                nxt = succ[cur]
+                route.append(nxt)
+                if nxt in visited: break
+                visited.add(nxt)
+                cur = nxt
+            else:
+                break
+        print(f"  Truck {k}: {' -> '.join(map(str, route))}")
+    print()
+
+    # 3) Tiempos por nodo (tau) y ventanas
+    print("tau por nodo (con ventanas):")
+    for i in All_Nodes:
+        t = val(tau[i])
+        e = E_win.get(i,None); d = D_win.get(i,None)
+        print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
+    print()
+
+    # 4) Tiempos/esperas en FF y GH (si aplica)
+    if Facilities:
+        print("FF (a_F, d_F, w_F):")
+        for k in K_trucks:
+            for f in Facilities.keys():
+                print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
+        print()
+    if Groups:
+        print("GH (a_G, d_G, w_D, w_G):")
+        for k in K_trucks:
+            for g in Groups.keys():
+                print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
+        print()
+
+    # 5) Asignación de muelles y precedencias activas
+    print("Asignación de muelles y[k,d,g]=1:")
+    any_y = False
+    for k in K_trucks:
+        for g in Groups.keys():
+            for d in Docks:
+                if val(y[k,d,g]) > 0.5:
+                    print(f"  k={k} -> GH {g}, dock {d}")
+                    any_y = True
+    if not any_y: print("  (ninguna)")
+    print()
+
+    print("Precedencias eta[k1,k2,g]=1:")
+    any_eta = False
+    for g in Groups.keys():
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
+                    print(f"  GH {g}: k1={k1} antes de k2={k2}")
+                    any_eta = True
+    if not any_eta: print("  (ninguna)")
+    print()
+
+    # 6) Uso de capacidad (suma de pickups atendidos por camión)
+    print("Uso de capacidad por camión:")
+    for k in K_trucks:
+        weight = 0.0; length = 0.0
+        for i in Nodes_P:
+            if any(val(x[j,i,k]) > 0.5 for j in All_Nodes if (j,i) in Edges):
+                weight += W[i]; length += L[i]
+        print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
+    print("==================================\n")
+# =================== END QUICK REPORT ===================
 
 
 
