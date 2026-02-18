@@ -5,6 +5,7 @@ import pandas as pd
 from gurobipy import Model,GRB,LinExpr
 import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
+import random
 
 # Get path to current folder
 cwd = os.getcwd()
@@ -90,6 +91,10 @@ for i in  All_Nodes:
     # Processing Time
     if i != 0: P[i] = Proc_Time
     
+for i in  All_Nodes:
+    # Processing Time
+    if i != 0: P[i] = Proc_Time
+    
     # Weights & Lengths (Only for Pickups, 0 for deliveries to avoid double counting in cap constraints)
     if i in Nodes_P:
         W[i] = Weight_u
@@ -99,19 +104,23 @@ for i in  All_Nodes:
         L[i] = 0
         
     # Time Windows
-    tightened_P_windows = []
-    if i in Nodes_P[:int(tighter_windows_instance*len(Nodes_P))]:
+    if i in Nodes_P:
+        E_win[i] = 0; D_win[i] = Horizon
+    elif i in Nodes_D:
+        E_win[i] = 0; D_win[i] = Horizon
+# Tightened Time Windows
+tightened_P_windows = []
+shuffled_Nodes=All_Nodes[1:].copy()
+random.shuffle(shuffled_Nodes)
+print(shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))])
+for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
+    if i in Nodes_P:
         E_win[i] = 50; D_win[i] = 150
         tightened_P_windows.append(i)
-    elif i in Nodes_D[:int(tighter_windows_instance*len(Nodes_D))]:
+    elif i in Nodes_D:
         E_win[i] = 200; D_win[i] = 350
         if i-n_uld in tightened_P_windows:
             D_win[i]+= 30 # Includes 30 min buffer if needed per paper????? 
-    else:
-        if i in Nodes_P:
-            E_win[i] = 0; D_win[i] = 480
-        elif i in Nodes_D:
-            E_win[i] = 0; D_win[i] = 480
 
 # Calculate Travel Matrix (T_ij)
 for i, j in Edges:

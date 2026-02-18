@@ -5,6 +5,7 @@ import pandas as pd
 from gurobipy import Model,GRB,LinExpr
 import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
+import random
 
 # Get path to current folder
 cwd = os.getcwd()
@@ -84,16 +85,23 @@ for i in  All_Nodes:
         L[i] = 0
         
     # Time Windows
-    tightened_P_windows = []
-    if i in Nodes_P[:int(tighter_windows_instance*len(Nodes_P))]:
+    if i in Nodes_P:
+        E_win[i] = 0; D_win[i] = Horizon
+    elif i in Nodes_D:
+        E_win[i] = 0; D_win[i] = Horizon
+# Tightened Time Windows
+tightened_P_windows = []
+shuffled_Nodes=All_Nodes[1:].copy()
+random.shuffle(shuffled_Nodes)
+print(shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))])
+for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
+    if i in Nodes_P:
         E_win[i] = 50; D_win[i] = 150
         tightened_P_windows.append(i)
-    elif i in Nodes_D[:int(tighter_windows_instance*len(Nodes_D))]:
+    elif i in Nodes_D:
         E_win[i] = 200; D_win[i] = 350
         if i-n_uld in tightened_P_windows:
             D_win[i]+= 30 # Includes 30 min buffer if needed per paper????? 
-    else:
-        E_win[i] = 0; D_win[i] = 480
 
 
 # Calculate Travel Matrix (T_ij)
@@ -273,13 +281,13 @@ for g in Groups:
             # j is a delivery node in GH g, and i is outside GH g
             if j in nodes_g and i not in nodes_g and j in Nodes_D:
                 m.addConstr(
-                    tau[j] >= tau[i] + P[i] + T[i, j] \
-                              - M * (1 - x[i, j, k]) \
+                    tau[j] >= tau[i] + P[i] + T[i, j] 
+                              - M * (1 - x[i, j, k]) 
                               + w_D[k, g],
                     name=f"time_enter_GH_g{g}_k{k}_i{i}_j{j}"
                 )
 
-# (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
+"""# (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
 # Logic: If moving from i (outside GH g) to j (inside GH g), account for travel + waiting w_D
 for g, g_nodes in Groups.items():      # For each Ground Handler group
     for j in g_nodes:                  # For each node belonging to this GH
@@ -293,7 +301,7 @@ for g, g_nodes in Groups.items():      # For each Ground Handler group
                                   - (1 - x[i, j, k]) * M 
                                   + w_D[k, g],
                         name=f"Eq11_GH_Arrival_Wait_{g}_{k}_{i}_{j}"
-                    )
+                    )"""
 
 # (12) Time consistency within GH Groups
 # Ensures valid flow of time when moving between nodes inside the same Ground Handler
