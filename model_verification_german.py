@@ -19,7 +19,7 @@ M=10000
 tighter_windows_instance=0
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 2
+n_uld = 3
 K_trucks = [1] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
@@ -61,9 +61,6 @@ for i in All_Nodes:
         # 2) Prohibir volver al depósito desde un pickup: P -> 0
         if i in Nodes_P and j == 0:
             continue
-        # 3) Prohibir saltos de delivery a pickup: D -> P
-        if i in Nodes_D and j in Nodes_P:
-            continue
         Edges.append((i, j))
 
 
@@ -86,7 +83,8 @@ for i in Nodes_D:
     node_loc_map = [3,4]
     node_loc_maps.append(node_loc_map)
 
-#node_loc_maps= [[0, 0], [0, 1], [0, 2], [0, 3], [1, 1.5]]
+
+
 # Fill Parameters
 for i in  All_Nodes:
     # Processing Time
@@ -152,6 +150,7 @@ w_D = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="w_D") # Wai
 w_F = m.addVars(K_trucks, Facilities.keys(), vtype=GRB.CONTINUOUS, name="w_F") # Waiting at FF while docked
 w_G = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="w_G") # Waiting at GH while docked
 
+
 # Scheduling and Dock Assignment variables
 # eta: 1 if k1 leaves g before k2 docks
 eta = m.addVars(K_trucks, K_trucks, Groups.keys(), vtype=GRB.BINARY, name="eta") 
@@ -178,6 +177,7 @@ wait_gh_service_cost = gp.quicksum(w_G[k, g]
 wait_ff_cost = gp.quicksum(w_F[k, f] 
                            for k in K_trucks 
                            for f in Facilities.keys())
+
 
 m.setObjective(travel_cost + wait_gh_dock_cost + wait_gh_service_cost + wait_ff_cost, 
                GRB.MINIMIZE)
@@ -228,7 +228,6 @@ for k in K_trucks:
             == 0,
             name=f"flow_conservation_at_each_node_k{k}_i{i}"
         )
-
 
 # (5) LIFO strategy for first and last nodes visisted by each truck
 for k in K_trucks:
@@ -283,7 +282,6 @@ for k in K_trucks:
             <= 1,
             name=f"visit_GH_at_most_once_g{g}_k{k}"
         )
-
 
 # (9) time precedence for pickup nodes
 
@@ -431,7 +429,7 @@ for g in Groups:
                      m.addConstr(d_G[k, g] <= tau[i] + P[i] + (1 - x[i, j, k]) * M, 
                                  name=f"C24_DepGH_UB_k{k}_g{g}_i{i}")
 
-# (25) Waiting time at FF while docked
+""" """ # (25) Waiting time at FF while docked
 # Waiting >= Departure - Arrival - Total Processing at that FF
 for f in Facilities:
     for k in K_trucks:
@@ -446,8 +444,8 @@ for g in Groups:
     for k in K_trucks:
         proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in Groups[g] for j in  All_Nodes if (j, i) in Edges)
         m.addConstr(w_G[k, g] >= d_G[k, g] - a_G[k, g] - w_D[k, g] - proc_sum, 
-                    name=f"C26_WaitGH_k{k}_g{g}")
-
+                    name=f"C26_WaitGH_k{k}_g{g}") 
+        
 # (27) Overlap variable definition (Lower Bound logic)
 # If eta=1, then Departure of k1 <= Arrival of k2 + Waiting of k2 (k1 leaves before k2 uses dock)
 for g in Groups:
