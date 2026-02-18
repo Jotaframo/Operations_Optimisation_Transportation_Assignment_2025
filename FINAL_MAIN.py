@@ -21,14 +21,14 @@ tighter_windows_instance=0
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 6
-K_trucks = [1, 2] # Two trucks
+K_trucks = [1, 2, 3] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
 Proc_Time = 2     # minutes
-Horizon = 480     # minutes
+Horizon = 720     # minutes
 Cap_W = 10000    # kg
 Cap_L = 13.6      # meters
-Speed_kmh = 80    # km/h
+Speed_kmh = 42    # km/h
 Speed_mpm = Speed_kmh / 60.0 # km per minute
 
 # Coordinates (DMS to Decimal Degrees)
