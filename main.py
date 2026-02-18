@@ -17,7 +17,7 @@ M=86400 #[s] in a day
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
-tighter_windows_instance=0.2
+tighter_windows_instance=0
 tight_Win_P_a=50 #[min]
 tight_Win_P_d=150 #[min]
 tight_Win_D_a=200 #[min]
@@ -25,7 +25,7 @@ tight_Win_D_d=350 #[min]
 
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 8
+n_uld = 7  # Changed from 8 to match actual number of ULDs in Facilities
 K_trucks = [1, 2] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
@@ -33,13 +33,13 @@ Proc_Time = 2     # minutes
 Horizon = 480     # minutes
 Cap_W = 10000     # kg
 Cap_L = 13.6      # meters
-Speed_kmh = 35    # km/h
-Speed_mpm = 35 / 60.0 # km per minute
+Speed_kmh = 100000    # km/h
+Speed_mpm = Speed_kmh / 60.0 # km per minute
 # Coordinates (DMS to Decimal Degrees)
 def dms_to_dd(d, m, s, direction='N'):
     dd = d + m/60 + s/3600
     if direction in ['S', 'W']: dd *= -1
-    return dd
+    return dd*111.32
 
 # Locations
 locs = {
@@ -48,6 +48,7 @@ locs = {
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
 }
+print(f'locs: {locs}')
 
 # Centroid for Depot (Node 0) - Calculated average of above
 locs['Depot'] = (52.2905, 4.7627) 
@@ -69,10 +70,23 @@ def get_dist(coord1, coord2):
 # 9-12: Deliveries at GH1 (Corresponding to 1-4)
 # 13-16: Deliveries at GH2 (Corresponding to 5-8)
 
-Nodes_P = list(range(1, 9))
-Nodes_D = list(range(9, 17))
+Nodes_P = list(range(1, n_uld+1))
+Nodes_D = list(range(n_uld+1, (n_uld*2+1)))
 All_Nodes = [0] + Nodes_P + Nodes_D
 Edges = [(i, j) for i in  All_Nodes for j in  All_Nodes if i != j]
+
+Edges = []
+for i in All_Nodes:
+    for j in All_Nodes:
+        if i == j: 
+            continue
+        # 1) Prohibir salir del depósito a un delivery: 0 -> D
+        if i == 0 and j in Nodes_D:
+            continue
+        # 2) Prohibir volver al depósito desde un pickup: P -> 0
+        if i in Nodes_P and j == 0:
+            continue
+        Edges.append((i, j))
 
 # Parameter Dictionaries
 T = {} # Travel Time
@@ -86,9 +100,11 @@ L = {0: 0} # Lengths
 node_loc_map = {0: locs['Depot']}
 
 for i in range(1, 5): 
-    node_loc_map[i] = locs['FF1']; node_loc_map[i+8] = locs['GH1']
-for i in range(5, 9): 
-    node_loc_map[i] = locs['FF2']; node_loc_map[i+8] = locs['GH2']
+    node_loc_map[i] = locs['FF1']
+    node_loc_map[i+n_uld] = locs['GH1']
+for i in range(5, 8): 
+    node_loc_map[i] = locs['FF2']
+    node_loc_map[i+n_uld] = locs['GH2']
 
 
 # Fill Parameters
@@ -109,7 +125,8 @@ for i in  All_Nodes:
         E_win[i] = 0; D_win[i] = Horizon
     elif i in Nodes_D:
         E_win[i] = 0; D_win[i] = Horizon
-# Tightened Time Windows
+
+"""# Tightened Time Windows
 tightened_P_windows = []
 shuffled_Nodes=All_Nodes[1:].copy()
 random.shuffle(shuffled_Nodes)
@@ -122,7 +139,7 @@ for i in shuffled_Nodes[:int(tighter_windows_instance*len(All_Nodes))]:
         E_win[i] = tight_Win_D_a; D_win[i] = tight_Win_D_d
         if i-n_uld in tightened_P_windows:
             D_win[i]+= 30 # Includes 30 min buffer if needed per paper????? 
-
+"""
 
 # Calculate Travel Matrix (T_ij)
 for i, j in Edges:
@@ -133,13 +150,15 @@ for i, j in Edges:
 # FFs (Pickups)
 Facilities = {
     1: [1, 2, 3, 4], # FF1
-    2: [5, 6, 7, 8]  # FF2
+    2: [5, 6, 7]  # FF2
 }
 # GHs (Deliveries)
 Groups = {
-    1: [9, 10, 11, 12],  # GH1
-    2: [13, 14, 15, 16]  # GH2
+    1: [8, 9, 10, 11],  # GH1
+    2: [12, 13, 14]  # GH2
 }
+
+
 
 #Define Model
 m = gp.Model("GHDC-PDPTW")
@@ -207,11 +226,9 @@ for i in Nodes_P:
     )
 
 # (2) pickup and delivery of each ULD are done by the same truck
-n = len(Nodes_P)  # Nodes_P = [1,...,n]
-
 for k in K_trucks:
     for i in Nodes_P:
-        delivery = i + n
+        delivery = i + n_uld
         m.addConstr(
             gp.quicksum(x[j, i, k]       for j in All_Nodes if (j, i)       in Edges) -
             gp.quicksum(x[j, delivery, k] for j in All_Nodes if (j, delivery) in Edges)
@@ -243,7 +260,7 @@ for k in K_trucks:
 # (5) LIFO strategy for first and last nodes visisted by each truck
 for k in K_trucks:
     for i in Nodes_P:
-        delivery = i + n
+        delivery = i + n_uld
         m.addConstr(
             x[depot, i, k] - x[delivery, depot, k] == 0,
             name=f"LIFO_first_last_i{i}_k{k}"
@@ -253,8 +270,8 @@ for k in K_trucks:
 for k in K_trucks:
     for (i, j) in Edges:
         if i in Nodes_P and j in Nodes_P:  # both are pickup nodes
-            delivery_i = i + n
-            delivery_j = j + n
+            delivery_i = i + n_uld
+            delivery_j = j + n_uld
             m.addConstr(
                 x[i, j, k] - x[delivery_j, delivery_i, k] == 0,
                 name=f"LIFO_reverse_i{i}_j{j}_k{k}"
@@ -294,21 +311,8 @@ for (i, j) in Edges:
             name=f"time_pickups_i{i}_j{j}"
         )
 
-# (10) time precedence for entering a GH
-for g in Groups:
-    nodes_g = Groups[g]  # delivery nodes of GH g
-    for k in K_trucks:
-        for (i, j) in Edges:
-            # j is a delivery node in GH g, and i is outside GH g
-            if j in nodes_g and i not in nodes_g and j in Nodes_D:
-                m.addConstr(
-                    tau[j] >= tau[i] + P[i] + T[i, j] \
-                              - M * (1 - x[i, j, k]) \
-                              + w_D[k, g],
-                    name=f"time_enter_GH_g{g}_k{k}_i{i}_j{j}"
-                )
-
-# (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
+# (10/11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
+# NOTE: Original constraint 10 was removed as it's redundant with constraint 11
 # Logic: If moving from i (outside GH g) to j (inside GH g), account for travel + waiting w_D
 for g, g_nodes in Groups.items():      # For each Ground Handler group
     for j in g_nodes:                  # For each node belonging to this GH
@@ -340,7 +344,7 @@ for g, nodes in Groups.items(): #i and j belonging to the same GH
 # Links the last node visited to the depot arrival time
 for k in K_trucks:
     for i in  All_Nodes:
-        if i != 0: # For all nodes going to depot
+        if i != 0 and (i, 0) in Edges: # For all nodes going to depot
             m.addConstr(tau_end[k] >= tau[i] + P[i] + T[i,0] - (1 - x[i, 0, k])*M,
                         name=f"Eq13_EndTime_{k}_{i}")
 
@@ -519,4 +523,207 @@ for g in Groups:
 
 m.update()
 
-print("tabien")
+# ===================== MODEL STATISTICS =====================
+print("\n========== MODEL STATISTICS ==========")
+print(f"Number of variables: {m.NumVars}")
+print(f"  - Binary variables: {m.NumBinVars}")
+print(f"  - Continuous variables: {m.NumVars - m.NumBinVars}")
+print(f"Number of constraints: {m.NumConstrs}")
+print(f"Number of nonzeros: {m.NumNZs}")
+
+# Diagnostic: Check key parameters
+print("\n========== DIAGNOSTIC INFO ==========")
+print(f"Nodes_P: {Nodes_P}")
+print(f"Nodes_D: {Nodes_D}")
+print(f"n_uld: {n_uld}")
+print(f"Number of edges: {len(Edges)}")
+print(f"Horizon: {Horizon} minutes")
+print(f"Processing time: {Proc_Time} minutes")
+
+# Check if edges allow required routes
+depot_to_pickup = [(i,j) for (i,j) in Edges if i == 0 and j in Nodes_P]
+pickup_to_delivery = [(i,j) for (i,j) in Edges if i in Nodes_P and j in Nodes_D]
+delivery_to_depot = [(i,j) for (i,j) in Edges if i in Nodes_D and j == 0]
+
+print(f"\nEdge check:")
+print(f"  Depot -> Pickups: {len(depot_to_pickup)} edges available")
+print(f"  Pickups -> Deliveries: {len(pickup_to_delivery)} edges available")
+print(f"  Deliveries -> Depot: {len(delivery_to_depot)} edges available")
+
+# Check time feasibility
+print(f"\nTime feasibility:")
+min_travel_time = min([T[i,j] for (i,j) in Edges if i != j])
+max_travel_time = max([T[i,j] for (i,j) in Edges if i != j])
+print(f"  Travel time range: {min_travel_time:.2f} - {max_travel_time:.2f} minutes")
+print(f"  Min route time estimate: {len(Nodes_P) * Proc_Time + min_travel_time * (len(Nodes_P)*2 + 2):.2f} minutes")
+print(f"  Available horizon: {Horizon} minutes")
+
+# Check pairing
+print(f"\nULD Pairing (Pickup -> Delivery):")
+for i in Nodes_P:
+    delivery = i + n_uld
+    if delivery in Nodes_D:
+        print(f"  Pickup {i} -> Delivery {delivery} OK")
+    else:
+        print(f"  Pickup {i} -> Delivery {delivery} MISSING!")
+        
+print("======================================\n")
+
+# ===================== SOLVE & QUICK REPORT =====================
+
+# Set optimization parameters for better diagnostics  
+m.setParam('TimeLimit', 60)  # Limit solve time to 60 seconds
+
+m.optimize()
+
+def val(v):
+    try:
+        return float(v.X)
+    except:
+        return float(v)
+
+if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
+    print(f"[STATUS] {m.status}")
+    
+    if m.status == GRB.INFEASIBLE:
+        print("\n========== INFEASIBILITY ANALYSIS ==========")
+        print("Computing IIS (Irreducible Inconsistent Subsystem)...")
+        
+        # Compute IIS
+        m.computeIIS()
+        
+        # Get conflicting constraints
+        print("\nConflicting Constraints:")
+        conflicting_constrs = []
+        for c in m.getConstrs():
+            if c.IISConstr:
+                conflicting_constrs.append(c.ConstrName)
+        
+        # Group by constraint type
+        constr_types = {}
+        for name in conflicting_constrs:
+            prefix = name.split('_')[0]
+            if prefix not in constr_types:
+                constr_types[prefix] = []
+            constr_types[prefix].append(name)
+        
+        print(f"\nTotal conflicting constraints: {len(conflicting_constrs)}")
+        print("\nGrouped by type:")
+        for prefix, names in sorted(constr_types.items()):
+            print(f"  {prefix}: {len(names)} constraints")
+            if len(names) <= 5:
+                for name in names:
+                    print(f"    - {name}")
+            else:
+                for name in names[:3]:
+                    print(f"    - {name}")
+                print(f"    ... and {len(names)-3} more")
+        
+        # Check variables in IIS
+        print("\nVariables in IIS:")
+        iis_vars = []
+        for v in m.getVars():
+            if v.IISLB or v.IISUB:
+                iis_vars.append(v.VarName)
+        
+        if iis_vars:
+            print(f"  {len(iis_vars)} variables involved")
+            for vname in iis_vars[:10]:
+                print(f"    - {vname}")
+            if len(iis_vars) > 10:
+                print(f"    ... and {len(iis_vars)-10} more")
+        else:
+            print("  No variable bounds in conflict")
+        
+        print("\n============================================")
+        
+        # Write IIS to file for detailed analysis
+        m.write("model_iis.ilp")
+        print("\nDetailed IIS written to: model_iis.ilp")
+    
+else:
+    print("\n========== QUICK REPORT ==========")
+    print(f"Obj: {m.objVal:.4f}\n")
+
+    # 1) Arcos usados x=1 (por camión)
+    print("x[i,j,k]=1 (arcos recorridos):")
+    for k in K_trucks:
+        used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
+        print(f"  Truck {k}: {used}")
+    print()
+
+    # 2) Ruta sencilla por camión (desde depot siguiendo sucesores)
+    print("Ruta (desde 0):")
+    for k in K_trucks:
+        succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
+        route = [0]
+        cur = 0
+        visited = set([0])
+        # evita bucles infinitos en caso patológico
+        for _ in range(len(All_Nodes)+2):
+            if cur in succ:
+                nxt = succ[cur]
+                route.append(nxt)
+                if nxt in visited: break
+                visited.add(nxt)
+                cur = nxt
+            else:
+                break
+        print(f"  Truck {k}: {' -> '.join(map(str, route))}")
+    
+
+    # 3) Tiempos por nodo (tau) y ventanas
+    print("tau por nodo (con ventanas):")
+    for i in All_Nodes:
+        t = val(tau[i])
+        e = E_win.get(i,None); d = D_win.get(i,None)
+        print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
+    print()
+
+    # 4) Tiempos/esperas en FF y GH (si aplica)
+    if Facilities:
+        print("FF (a_F, d_F, w_F):")
+        for k in K_trucks:
+            for f in Facilities.keys():
+                print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
+        print()
+    if Groups:
+        print("GH (a_G, d_G, w_D, w_G):")
+        for k in K_trucks:
+            for g in Groups.keys():
+                print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
+        print()
+
+    # 5) Asignación de muelles y precedencias activas
+    print("Asignación de muelles y[k,d,g]=1:")
+    any_y = False
+    for k in K_trucks:
+        for g in Groups.keys():
+            for d in Docks:
+                if val(y[k,d,g]) > 0.5:
+                    print(f"  k={k} -> GH {g}, dock {d}")
+                    any_y = True
+    if not any_y: print("  (ninguna)")
+    print()
+
+    print("Precedencias eta[k1,k2,g]=1:")
+    any_eta = False
+    for g in Groups.keys():
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
+                    print(f"  GH {g}: k1={k1} antes de k2={k2}")
+                    any_eta = True
+    if not any_eta: print("  (ninguna)")
+    print()
+
+    # 6) Uso de capacidad (suma de pickups atendidos por camión)
+    print("Uso de capacidad por camión:")
+    for k in K_trucks:
+        weight = 0.0; length = 0.0
+        for i in Nodes_P:
+            if any(val(x[j,i,k]) > 0.5 for j in All_Nodes if (j,i) in Edges):
+                weight += W[i]; length += L[i]
+        print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
+    print("==================================\n")
+# =================== END QUICK REPORT ===================
