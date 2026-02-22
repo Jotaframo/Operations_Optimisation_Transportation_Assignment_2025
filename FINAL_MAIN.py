@@ -14,7 +14,8 @@ cwd = os.getcwd()
 # Get all instances
 full_list           = os.listdir(cwd)
 model=Model()
-M=10000 
+M=10000 # Big M for time constraints (should be larger than Horizon + max processing time)
+
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
@@ -46,8 +47,7 @@ def get_dist(coord1, coord2):
     r = 6371 # Radius of earth in kilometers
     return c * r
 
-# --- NODE MAPPING ---
-
+#NODE MAPPING
 Nodes_P = list(range(1, n_uld+1)) # Pickup nodes (1 to n_uld)
 Nodes_D = list(range(n_uld+1, 2*n_uld+1)) # Delivery nodes (n_uld+1 to 2*n_uld)
 All_Nodes = [0] + Nodes_P + Nodes_D  # 0 is depot, followed by pickups and deliveries
@@ -59,7 +59,7 @@ FFs = {
 
 }
 # GHs (Deliveries)
-GGs = {
+GHs = {
     1: Nodes_D[0:n_uld//2],  # GH1 
     2: Nodes_D[n_uld//2:], # GH2
     
@@ -95,16 +95,7 @@ locs = {
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
 }
-
-# Map nodes to physical locations to calc distances
 node_loc_maps = [[52.2905, 4.7627]] # Depot
-
-# Calculate distances between all FFs and GHs
-print("Distances (km) between FFs and GGs:")
-for f in FFs.keys():
-    for g in GGs.keys():
-        dist = get_dist(locs[f'FF{f}'], locs[f'GH{g}'])
-        print(f"  FF{f} -> GH{g}: {dist:.2f} km")
 
 for i in Nodes_P:
     if i in FFs[1]:
@@ -113,12 +104,11 @@ for i in Nodes_P:
         node_loc_maps.append(list(locs['FF2']))
 
 for i in Nodes_D:
-    if i in GGs[1]:
+    if i in GHs[1]:
         node_loc_maps.append(list(locs['GH1']))
-    elif i in GGs[2]:
+    elif i in GHs[2]:
         node_loc_maps.append(list(locs['GH2']))
 
-#node_loc_maps= [[0, 0], [0, 1], [0, 2], [0, 3], [1, 1.5]]
 # Fill Parameters
 for i in  All_Nodes:
     # Processing Time
@@ -165,7 +155,12 @@ for i, j in Edges:
 #Define Model
 m = gp.Model("GHDC-PDPTW")
 
-###VARIABLES###
+
+
+
+
+### VARIABLES ###
+
 x = m.addVars(Edges, K_trucks, vtype=GRB.BINARY, name="x")
 tau = m.addVars( All_Nodes, vtype=GRB.CONTINUOUS, name="tau")
 tau_end = m.addVars(K_trucks, vtype=GRB.CONTINUOUS, name="tau_end")
@@ -173,23 +168,21 @@ tau_end = m.addVars(K_trucks, vtype=GRB.CONTINUOUS, name="tau_end")
 # Facility/Group Arrival/Departure times (indexed by Truck, Facility/Group ID)
 a_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="a_F")
 d_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="d_F")
-a_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="a_G")
+a_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="a_G")
 # d_G is used in later constraints (23+), but required if we were doing the full model
-d_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="d_G") 
-
+d_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="d_G") 
 
 # Waiting times
-w_D = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="w_D") # Waiting at GH before docking
+w_D = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="w_D") # Waiting at GH before docking
 w_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="w_F") # Waiting at FF while docked
-w_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="w_G") # Waiting at GH while docked
+w_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="w_G") # Waiting at GH while docked
 
-# Scheduling and Dock Assignment variables
-# eta: 1 if k1 leaves g before k2 docks
-eta = m.addVars(K_trucks, K_trucks, GGs.keys(), vtype=GRB.BINARY, name="eta") 
-# y: 1 if truck k assigned to dock d at GH g
-y = m.addVars(K_trucks, Docks, GGs.keys(), vtype=GRB.BINARY, name="y")
-# z: Linearization variable for y*y. Relaxed to continuous [0,1] as per paper Section 3.3
-z = m.addVars(K_trucks, Docks, K_trucks, Docks, GGs.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
+# Scheduling and Dock Assignment variables:
+#   eta: 1 if k1 leaves g before k2 docks
+eta = m.addVars(K_trucks, K_trucks, GHs.keys(), vtype=GRB.BINARY, name="eta") 
+y = m.addVars(K_trucks, Docks, GHs.keys(), vtype=GRB.BINARY, name="y")
+#   z: Linearization variable for y*y
+z = m.addVars(K_trucks, Docks, K_trucks, Docks, GHs.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
 
 ### OBJECTIVE FUNCTION ###
 
@@ -200,16 +193,17 @@ travel_cost = gp.quicksum(T[i, j] * x[i, j, k]
 # Term 2: Waiting time at GH queues (Before Docking)
 wait_gh_dock_cost = gp.quicksum(w_D[k, g] 
                                 for k in K_trucks 
-                                for g in GGs.keys())
+                                for g in GHs.keys())
 # Term 3: Waiting time at GH docks (During Service/Windows)
 wait_gh_service_cost = gp.quicksum(w_G[k, g] 
                                    for k in K_trucks 
-                                   for g in GGs.keys())
+                                   for g in GHs.keys())
 # Term 4: Waiting time at FF docks (During Service/Windows)
 wait_ff_cost = gp.quicksum(w_F[k, f] 
                            for k in K_trucks 
                            for f in FFs.keys())
 
+# [1] Objective Function
 m.setObjective(travel_cost + wait_gh_dock_cost + wait_gh_service_cost + wait_ff_cost, 
                GRB.MINIMIZE)
 
@@ -217,7 +211,7 @@ m.update()
 
 
 ### CONSTRAINTS ###
-# (1) each pickup node is visited exactly once
+# [2] Each pickup node is visited exactly once
 for i in Nodes_P:
     m.addConstr(
         gp.quicksum(x[j, i, k]
@@ -227,7 +221,7 @@ for i in Nodes_P:
         name=f"pickup_node_visted_once_{i}"
     )
 
-# (2) pickup and delivery of each ULD are done by the same truck
+# [3] Pickup and delivery of each ULD are done by the same truck
 n = len(Nodes_P)  # Nodes_P = [1,...,n]
 
 for k in K_trucks:
@@ -241,7 +235,7 @@ for k in K_trucks:
         )
 
 
-# (3) each truck leaves the depot at most once
+# [4] Each truck leaves the depot at most once
 depot = 0
 
 for k in K_trucks:
@@ -250,7 +244,7 @@ for k in K_trucks:
         name=f"use_truck_at_most_once_k{k}"
     )
 
-# (4) what enters a node equals what leaves it (except depot, where this just allows start/end).
+# [5] What enters a node equals what leaves it (except depot, where this just allows start/end).
 for k in K_trucks:
     for i in All_Nodes:
         m.addConstr(
@@ -261,26 +255,25 @@ for k in K_trucks:
         )
 
 
-# (5) LIFO strategy for first and last nodes visisted by each truck
+# [6] LIFO strategy for first and last nodes visisted by each truck
 for k in K_trucks:
     for i in Nodes_P:
-        delivery = i + n
         m.addConstr(
-            x[depot, i, k] - x[delivery, depot, k] == 0,
+            x[depot, i, k] - x[i + n, depot, k] == 0,
             name=f"LIFO_first_last_i{i}_k{k}"
         )
 
-# (6) LIFO strategy for intermediate nodes
+# [7] LIFO strategy for intermediate nodes
 for k in K_trucks:
     for (i, j) in Edges:
         if i in Nodes_P and j in Nodes_P:  # both are pickup nodes
-            delivery_i = i + n
-            delivery_j = j + n
             m.addConstr(
-                x[i, j, k] - x[delivery_j, delivery_i, k] == 0,
+                x[i, j, k] - x[j + n, i + n, k] == 0,
                 name=f"LIFO_reverse_i{i}_j{j}_k{k}"
             )
 
+
+# [8] Each FF can be visited at most once per truck
 for k in K_trucks:
     for f in FFs:
         m.addConstr(
@@ -299,24 +292,25 @@ for k in K_trucks:
             name=f"visit_FF_at_most_once_f{f}_k{k}"
         )
 
+# [9] Each GH can be visited at most once per truck
 for k in K_trucks:
-    for g in GGs:
+    for g in GHs:
         m.addConstr(
             gp.quicksum(
                 x[j, i, k]
-                for i in GGs[g]
+                for i in GHs[g]
                 for j in All_Nodes
-                if (j, i) in Edges and (j not in GGs[g]) and j != 0
+                if (j, i) in Edges and (j not in GHs[g]) and j != 0
             )
             + gp.quicksum(
-                x[0, i, k] for i in GGs[g] if (0, i) in Edges
+                x[0, i, k] for i in GHs[g] if (0, i) in Edges
             )
             <= 1,
             name=f"visit_GH_at_most_once_g{g}_k{k}"
         )
 
 
-# (9) time precedence for pickup nodes
+# [10] Time precedence for pickup nodes
 
 for (i, j) in Edges:
     if j in Nodes_P:  # j is a pickup node (the one following i)
@@ -326,9 +320,9 @@ for (i, j) in Edges:
             name=f"time_pickups_i{i}_j{j}"
         )
 
-# (10) time precedence for entering a GH
-for g in GGs:
-    nodes_g = GGs[g]  # delivery nodes of GH g
+# [11] Time precedence for entering a GH
+for g in GHs:
+    nodes_g = GHs[g]  # delivery nodes of GH g
     for k in K_trucks:
         for (i, j) in Edges:
             # j is a delivery node in GH g, and i is outside GH g
@@ -340,25 +334,8 @@ for g in GGs:
                     name=f"time_enter_GH_g{g}_k{k}_i{i}_j{j}"
                 )
 
-# (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
-# Logic: If moving from i (outside GH g) to j (inside GH g), account for travel + waiting w_D
-#for g, g_nodes in GGs.items():      # For each Ground Handler group
-    #for j in g_nodes:                  # For each node belonging to this GH
-        #for k in K_trucks:             # For each truck
-            #for i in All_Nodes:        # Scan potential origin nodes
-                # Check valid edge AND strictly ensure i is NOT in the same GH group
-                #if i != j and (i, j) in Edges and (i not in g_nodes):
-                    
-                   # m.addConstr(
-                       # tau[j] >= tau[i] + P[i] + T[i, j] 
-                                 # - (1 - gp.quicksum(x[i, j, k] for k in K_trucks)) * M,
-                       # name=f"Eq11_GH_Arrival_Wait_{g}_{k}_{i}_{j}"
-                   # )
-
-# (12) Time consistency within GH GGs
-# Ensures valid flow of time when moving between nodes inside the same Ground Handler
-
-for g, nodes in GGs.items(): #i and j belonging to the same GH
+# [12] Time consistency within GH GHs (Ensures valid flow of time when moving between nodes inside the same Ground Handler)
+for g, nodes in GHs.items(): #i and j belonging to the same GH
     for i in nodes:
         for j in nodes:
             if i != j and (i, j) in Edges:
@@ -367,8 +344,7 @@ for g, nodes in GGs.items(): #i and j belonging to the same GH
                 m.addConstr(tau[j] >= tau[i] + P[i] + T[i,j] - (1 - expr)*M, 
                             name=f"Eq12_IntraGroupTime_{i}_{j}")
 
-# (13) Vehicle End Time
-# Only for nodes i with an allowed arc i -> 0 (avoids KeyError when P->0 is forbidden)
+# [13] Vehicle End Time (Only for nodes i with an allowed arc i -> 0 (avoids KeyError when P->0 is forbidden))
 for k in K_trucks:
     for i in All_Nodes:
         if i != 0 and (i, 0) in Edges:
@@ -378,14 +354,12 @@ for k in K_trucks:
             )
 
 
-# (14) Time Windows
-# Hard constraints on Earliest and Latest service times
+# [14] Time Windows (Earliest and Latest service times)
 for i in Nodes_P + Nodes_D:
     m.addConstr(tau[i] >= E_win[i], name=f"Eq14_TW_LB_{i}")
     m.addConstr(tau[i] <= D_win[i], name=f"Eq14_TW_UB_{i}")
 
-# (15) Weight Capacity
-# Total weight of Pickups visited by truck k must not exceed Q_W
+# [15] Weight Capacity (Total weight of Pickups visited by truck k must not exceed Q_W)
 for k in K_trucks:
     # Summing flow into pickup nodes (i <= n)
     load_expr =  gp.quicksum(W[i] * x[j, i, k] 
@@ -393,76 +367,63 @@ for k in K_trucks:
                             for j in  All_Nodes if (j, i) in Edges)
     m.addConstr(load_expr <= Cap_W, name=f"Eq15_WeightCap_{k}")
 
-# (16) Length Capacity
-# Total length of Pickups visited by truck k must not exceed Q_L
+# [16] Length Capacity (Total length of Pickups visited by truck k must not exceed Q_L)
 for k in K_trucks:
     len_expr =  gp.quicksum(L[i] * x[j, i, k] 
                            for i in  All_Nodes 
                            for j in  All_Nodes if (j, i) in Edges)
     m.addConstr(len_expr <= Cap_L, name=f"Eq16_LengthCap_{k}")
 
-# --- Linearization of Arrival/Departure Times (17-22) ---
-
-# (17 & 18) Facility Arrival Time (a_F)
-# If truck k travels i -> j, and j is in Facility f but i is NOT, record arrival time.
+# (17 & 18) Facility Arrival Time (a_F) (If truck k travels i -> j, and j is in Facility f but i is NOT, record arrival time)
 for f, f_nodes in FFs.items():
     for k in K_trucks:
         for i, j in Edges:
             if j in f_nodes and i not in f_nodes:
-                # (17) Lower Bound
+                # [17] Lower Bound
                 m.addConstr(a_F[k,f] >= tau[i] + P[i] + T[i,j] - (1 - x[i,j,k])*M,
                             name=f"Eq17_ArrF_LB_{k}_{f}")
-                # (18) Upper Bound
+                # [18] Upper Bound
                 m.addConstr(a_F[k,f] <= tau[i] + P[i] + T[i,j] + (1 - x[i,j,k])*M,
                             name=f"Eq18_ArrF_UB_{k}_{f}")
 
-# (19 & 20) Facility Departure Time (d_F)
-# If truck k travels i -> j, and i is in Facility f but j is NOT, record departure time.
+# (19 & 20) Facility Departure Time (d_F) (If truck k travels i -> j, and i is in Facility f but j is NOT, record departure time)
 for f, f_nodes in FFs.items():
     for k in K_trucks:
         for i, j in Edges:
             if i in f_nodes and j not in f_nodes:
-                # (19) Lower Bound
+                # [19] Lower Bound
                 m.addConstr(d_F[k,f] >= tau[i] + P[i] - (1 - x[i,j,k])*M,
                             name=f"Eq19_DepF_LB_{k}_{f}")
-                # (20) Upper Bound
+                # [20] Upper Bound
                 m.addConstr(d_F[k,f] <= tau[i] + P[i] + (1 - x[i,j,k])*M,
                             name=f"Eq20_DepF_UB_{k}_{f}")
 
-# (21 & 22) Group Arrival Time (a_G)
-# If truck k travels i -> j, and j is in Group g but i is NOT, record arrival time.
-for g, g_nodes in GGs.items():
+# (21 & 22) Group Arrival Time (a_G) (If truck k travels i -> j, and j is in Group g but i is NOT, record arrival time)
+for g, g_nodes in GHs.items():
     for k in K_trucks:
         for i, j in Edges:
             if j in g_nodes and i not in g_nodes:
-                # (21) Lower Bound
+                # [21] Lower Bound
                 m.addConstr(a_G[k,g] >= tau[i] + P[i] + T[i,j] - (1 - x[i,j,k])*M,
                             name=f"Eq21_ArrG_LB_{k}_{g}")
-                # (22) Upper Bound
+                # [22] Upper Bound
                 m.addConstr(a_G[k,g] <= tau[i] + P[i] + T[i,j] + (1 - x[i,j,k])*M,
                             name=f"Eq22_ArrG_UB_{k}_{g}")
 
-# (23) Departure time from GH (Lower Bound)
-# Ensures departure time >= start service of the last node served in that GH + processing
-for g in GGs:
+# (23 & 24) Departure time from GH 
+for g in GHs:
     for k in K_trucks:
-        for i in GGs[g]: # Node in GH
+        for i in GHs[g]: # Node in GH
             for j in  All_Nodes: # Possible next node
-                if j not in GGs[g] and (i,j) in Edges:
+                if j not in GHs[g] and (i,j) in Edges:
+                     # [23] Lower Bound
                      m.addConstr(d_G[k, g] >= tau[i] + P[i] - (1 - x[i, j, k]) * M, 
                                  name=f"C23_DepGH_LB_k{k}_g{g}_i{i}")
-
-# (24) Departure time from GH (Upper Bound)
-# Tightens the departure time definition
-for g in GGs:
-    for k in K_trucks:
-        for i in GGs[g]: 
-            for j in  All_Nodes:
-                if j not in GGs[g] and (i,j) in Edges:
+                        # [24] Upper Bound
                      m.addConstr(d_G[k, g] <= tau[i] + P[i] + (1 - x[i, j, k]) * M, 
                                  name=f"C24_DepGH_UB_k{k}_g{g}_i{i}")
 
-# (25) Waiting time at FF while docked
+# [25] Waiting time at FF while docked
 # Waiting >= Departure - Arrival - Total Processing at that FF
 for f in FFs:
     for k in K_trucks:
@@ -471,46 +432,41 @@ for f in FFs:
         m.addConstr(w_F[k, f] >= d_F[k, f] - a_F[k, f] - proc_sum, 
                     name=f"C25_WaitFF_k{k}_f{f}")
 
-# (26) Waiting time at GH while docked
-# Waiting >= Departure - Arrival - Waiting before docking - Total Processing at that GH
-for g in GGs:
+# [26] Waiting time at GH while docked (Waiting >= Departure - Arrival - Waiting before docking - Total Processing at that GH)
+for g in GHs:
     for k in K_trucks:
-        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in GGs[g] for j in  All_Nodes if (j, i) in Edges)
+        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in GHs[g] for j in  All_Nodes if (j, i) in Edges)
         m.addConstr(w_G[k, g] >= d_G[k, g] - a_G[k, g] - w_D[k, g] - proc_sum, 
                     name=f"C26_WaitGH_k{k}_g{g}")
 
-# (27) Overlap variable definition (Lower Bound logic)
-# If eta=1, then Departure of k1 <= Arrival of k2 + Waiting of k2 (k1 leaves before k2 uses dock)
-for g in GGs:
+# [27] Overlap variable definition (Lower Bound logic) (If eta=1, then Departure of k1 <= Arrival of k2 + Waiting of k2 (k1 leaves before k2 uses dock))
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             m.addConstr(d_G[k1, g] - a_G[k2, g] - w_D[k2, g] + M * eta[k1, k2, g] <= M,
                         name=f"C27_OverlapLB_k{k1}_k{k2}_g{g}")
 
-# (28) Overlap variable definition (Upper Bound logic)
-# Enforces the binary nature relative to the time difference
-for g in GGs:
+# [28] Overlap variable definition (Upper Bound logic) (Enforces the binary nature relative to the time difference)
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             m.addConstr(-d_G[k1, g] + a_G[k2, g] + w_D[k2, g] - M * eta[k1, k2, g] <= 0,
                         name=f"C28_OverlapUB_k{k1}_k{k2}_g{g}")
 
-# (29) Dock Assignment Constraint
-# Each truck visiting GH g must be assigned exactly one dock there
-for g in GGs:
+# [29] Dock Assignment Constraint (Each truck visiting GH g must be assigned exactly one dock there)
+for g in GHs:
     for k in K_trucks:
         visit_from_outside = gp.quicksum(
-            x[j, i, k] for i in GGs[g] for j in All_Nodes
-            if (j, i) in Edges and (j not in GGs[g])
+            x[j, i, k] for i in GHs[g] for j in All_Nodes
+            if (j, i) in Edges and (j not in GHs[g])
         )
         m.addConstr(
             gp.quicksum(y[k, d, g] for d in Docks) == visit_from_outside,
             name=f"C29_AssignDock_k{k}_g{g}"
         )
 
-# (30) Linearization of z (Part 1)
-# z <= y1
-for g in GGs:
+# [30] Linearization of z (Part 1) (z <= y1)
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -519,9 +475,8 @@ for g in GGs:
                         m.addConstr(z[k1, d1, k2, d2, g] <= y[k1, d1, g],
                                     name=f"C30_LinZ1_k{k1}_k{k2}_d{d1}_d{d2}_g{g}")
 
-# (31) Linearization of z (Part 2)
-# z <= y2
-for g in GGs:
+# [31] Linearization of z (Part 2) (z <= y2)
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -530,9 +485,8 @@ for g in GGs:
                         m.addConstr(z[k1, d1, k2, d2, g] <= y[k2, d2, g],
                                     name=f"C31_LinZ2_k{k1}_k{k2}_d{d1}_d{d2}_g{g}")
 
-# (32) Linearization of z (Part 3)
-# y1 + y2 - 1 <= z (Forces z=1 if both y1 and y2 are 1)
-for g in GGs:
+# [32] Linearization of z (Part 3) (y1 + y2 - 1 <= z (Forces z=1 if both y1 and y2 are 1))
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -541,10 +495,9 @@ for g in GGs:
                         m.addConstr(y[k1, d1, g] + y[k2, d2, g] - 1 <= z[k1, d1, k2, d2, g],
                                     name=f"C32_LinZ3_k{k1}_k{k2}_d{d1}_d{d2}_g{g}")
 
-# (33) Dock Capacity / Non-overlap constraint
-# Two trucks can be assigned to the SAME dock (d1) only if they do not overlap in time.
-# If z=1 (both on same dock), then eta[k1,k2] + eta[k2,k1] must be >= 1 (one precedes the other)
-for g in GGs:
+# [33] Dock Capacity / Non-overlap constraint (Two trucks can be assigned to the SAME dock (d1) only if they do not overlap in time)
+
+for g in GHs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -555,11 +508,7 @@ for g in GGs:
 
 m.update()
 
-print("tabien")
-
-# ===================== SOLVE & QUICK REPORT =====================
-TOL = 1e-6
-
+### SOLVE & QUICK REPORT ###
 m.optimize()
 
 def val(v):
@@ -573,6 +522,13 @@ if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
 else:
     print("\n========== QUICK REPORT ==========")
     print(f"Obj: {m.objVal:.4f}\n")
+
+    # (0) Calculate distances between all FFs and GHs
+    print("Distances (km) between FFs and GHs:")
+    for f in FFs.keys():
+        for g in GHs.keys():
+            dist = get_dist(locs[f'FF{f}'], locs[f'GH{g}'])
+            print(f"  FF{f} -> GH{g}: {dist:.2f} km")
 
     # 1) Used arcs x=1 (per truck)
     print("x[i,j,k]=1 (arcos recorridos):")
@@ -616,10 +572,10 @@ else:
             for f in FFs.keys():
                 print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
         print()
-    if GGs:
+    if GHs:
         print("GH (a_G, d_G, w_D, w_G):")
         for k in K_trucks:
-            for g in GGs.keys():
+            for g in GHs.keys():
                 print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
         print()
 
@@ -627,7 +583,7 @@ else:
     print("Asignación de muelles y[k,d,g]=1:")
     any_y = False
     for k in K_trucks:
-        for g in GGs.keys():
+        for g in GHs.keys():
             for d in Docks:
                 if val(y[k,d,g]) > 0.5:
                     print(f"  k={k} -> GH {g}, dock {d}")
@@ -637,7 +593,7 @@ else:
 
     print("Precedencias eta[k1,k2,g]=1:")
     any_eta = False
-    for g in GGs.keys():
+    for g in GHs.keys():
         for k1 in K_trucks:
             for k2 in K_trucks:
                 if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
