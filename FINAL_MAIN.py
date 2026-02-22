@@ -6,6 +6,7 @@ from gurobipy import Model,GRB,LinExpr
 import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
+from typing import Dict, List
 
 
 # Get path to current folder
@@ -49,6 +50,49 @@ def get_dist(coord1, coord2):
     c = 2 * asin(sqrt(a)) 
     r = 6371 # Radius of earth in kilometers
     return c * r
+
+def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("Matplotlib is not installed. Run: pip install matplotlib")
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot depot
+    depot = node_coords[0]
+    ax.scatter(depot[1], depot[0], c="black", s=80, marker="s", label="Depot")
+
+    # Plot FFs and GHs
+    for f, nodes in ff_nodes.items():
+        for i in nodes:
+            ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=60, marker="o")
+    for g, nodes in gh_nodes.items():
+        for i in nodes:
+            ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=60, marker="^")
+
+    ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
+    ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
+
+    colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
+    for idx, (k, route) in enumerate(routes.items()):
+        if len(route) < 2:
+            continue
+        color = colors[idx % len(colors)]
+        xs = [node_coords[i][1] for i in route]
+        ys = [node_coords[i][0] for i in route]
+        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k}")
+        ax.scatter(xs, ys, color=color, s=30)
+
+    ax.set_title("Truck Routes (FFs/GHs)")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.legend(loc="best")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    print(f"Route plot saved to: {output_path}")
 
 #NODE MAPPING
 Nodes_P = list(range(1, n_uld+1)) # Pickup nodes (1 to n_uld)
@@ -547,6 +591,7 @@ else:
 
     # 2) Simple route per truck (from depot following successors)
     print("\n Route Followed (from depot 0):")
+    routes = {}
     for k in K_trucks:
         succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
         route = [0]
@@ -562,6 +607,7 @@ else:
                 cur = nxt
             else:
                 break
+            routes[k] = route
         print(f"  Truck {k}: {' -> '.join(map(str, route))}")
     
     print("\n Truck utilization and route:")
@@ -653,5 +699,7 @@ else:
     print(f"  Status={m.status}, Runtime={m.Runtime:.3f}s, Nodes={int(m.NodeCount)}")
     print(f"  BestObj={m.objVal:.4f}, BestBound={m.ObjBound:.4f}, Gap={100.0*m.MIPGap:.2f}%")
     print(f"  Trucks used: {len(used_trucks)}/{len(K_trucks)}")
+
+    plot_routes(routes, node_loc_maps, FFs, GHs)
     
 
