@@ -7,6 +7,7 @@ import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
 
+
 # Get path to current folder
 cwd = os.getcwd()
 
@@ -17,25 +18,25 @@ M=10000
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
 # ULD & Truck Specs
-tighter_windows_instance=0
+tighter_windows_instance=0 # Proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 6
-K_trucks = [1,2] # Two trucks
+K_trucks = [1, 2, 3] # Two trucks
 Weight_u = 1000   # kg
 Length_u = 1.534  # meters (Converted 153.4cm to m)
-Proc_Time = 2     # minutes
+Proc_Time = 15     # minutes
 Horizon = 480     # minutes
-Cap_W = 10000    # kg
+Cap_W = 3000     # kg
 Cap_L = 13.6      # meters
-Speed_kmh = 80    # km/h
+Speed_kmh = 35    # km/h
 Speed_mpm = Speed_kmh / 60.0 # km per minute
 
 # Coordinates (DMS to Decimal Degrees)
 def dms_to_dd(d, m, s, direction='N'):
     dd = d + m/60 + s/3600
     if direction in ['S', 'W']: dd *= -1
-    return dd*111.32
+    return dd
 
 
 # Haversine Distance Function
@@ -108,7 +109,14 @@ locs = {
 
 
 # Map nodes to physical locations to calc distances
-node_loc_maps = [[52.2905*111.32, 4.7627*111.32]] # Depot
+node_loc_maps = [[52.2905, 4.7627]] # Depot
+
+# Calculate distances between all FFs and GHs
+print("Distances (km) between Facilities and Groups:")
+for f in Facilities.keys():
+    for g in Groups.keys():
+        dist = get_dist(locs[f'FF{f}'], locs[f'GH{g}'])
+        print(f"  FF{f} -> GH{g}: {dist:.2f} km")
 
 for i in Nodes_P:
     if i in Facilities[1]:
