@@ -327,9 +327,7 @@ for g in GHs:
         for (i, j) in Edges:
             if j in nodes_g and i not in nodes_g and j in Nodes_D: # j is a delivery node in GH g, and i is outside GH g
                 m.addConstr(
-                    tau[j] >= tau[i] + P[i] + T[i, j] \
-                              - M * (1 - x[i, j, k]) \
-                              + w_D[k, g],
+                    tau[j] >= tau[i] + P[i] + T[i, j] - M * (1 - x[i, j, k]) + w_D[k, g],
                     name=f"time_enter_GH_g{g}_k{k}_i{i}_j{j}"
                 )
 
@@ -520,7 +518,19 @@ if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
     print(f"[STATUS] {m.status}")
 else:
     print("\n =================== SOLUTION REPORT ===================")
-    print(f" Objective Value: {m.objVal:.4f}\n")
+    #objective decomposition
+    travel_val = travel_cost.getValue()
+    wait_gh_dock_val = wait_gh_dock_cost.getValue()
+    wait_gh_service_val = wait_gh_service_cost.getValue()
+    wait_ff_val = wait_ff_cost.getValue()
+    total_obj_val = travel_val + wait_gh_dock_val + wait_gh_service_val + wait_ff_val
+    safe_total = total_obj_val if abs(total_obj_val) > 1e-9 else 1.0
+    print(f"Objective Value: {m.objVal:.4f}")
+    print(" Objective breakdown:")
+    print(f"  1) Travel time:            {travel_val:10.4f} ({100.0*travel_val/safe_total:5.1f}%)")
+    print(f"  2) GH pre-dock waiting:    {wait_gh_dock_val:10.4f} ({100.0*wait_gh_dock_val/safe_total:5.1f}%)")
+    print(f"  3) GH dock waiting:        {wait_gh_service_val:10.4f} ({100.0*wait_gh_service_val/safe_total:5.1f}%)")
+    print(f"  4) FF dock waiting:        {wait_ff_val:10.4f} ({100.0*wait_ff_val/safe_total:5.1f}%)")
 
     # (0) Calculate distances between all FFs and GHs
     print("\n Distances between FFs and GHs in [km]:")
@@ -554,6 +564,18 @@ else:
                 break
         print(f"  Truck {k}: {' -> '.join(map(str, route))}")
     
+    print("\n Truck utilization and route:")
+    used_trucks = []
+    for k in K_trucks:
+        used_arcs = [(i, j) for (i, j) in Edges if val(x[i, j, k]) > 0.5]
+        used_flag = 1 if used_arcs else 0
+        if used_flag:
+            used_trucks.append(k)
+        route_travel = sum(T[i, j] for (i, j) in used_arcs)
+        first_departure = val(tau[0]) if any(i == 0 for (i, _) in used_arcs) else float('nan')
+        end_time = val(tau_end[k])
+        active_time = max(0.0, end_time - (val(tau[0]) if used_flag else 0.0))
+        print(f"  Truck {k}: used={used_flag}, arcs={len(used_arcs)}, travel={route_travel:.2f}, start={first_departure:.2f}, end={end_time:.2f}, active={active_time:.2f}")
 
     # 3) Node times (tau) and windows
     print("\n Tau per node with specified time windows:")
@@ -561,21 +583,24 @@ else:
         t = val(tau[i])
         e = E_win.get(i,None); d = D_win.get(i,None)
         print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
-   
 
     # 4) Times/waits at FF and GH (if applicable)
     if FFs:
         print("\n FF times (a_F, d_F, w_F):")
         for k in K_trucks:
             for f in FFs.keys():
-                print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
-        
+                visited_ff = any(
+                    val(x[j, i, k]) > 0.5
+                    for i in FFs[f] for j in All_Nodes if (j, i) in Edges and j not in FFs[f]
+                )
+                a_f_str = f"{val(a_F[k, f]):.2f}" if visited_ff else "NaN"
+                d_f_str = f"{val(d_F[k, f]):.2f}" if visited_ff else "NaN"
+                print(f"  k={k}, FF={f}: a_F={a_f_str}, d_F={d_f_str}, w_F={val(w_F[k,f]):.2f}")
     if GHs:
         print("\n GH times (a_G, d_G, w_D, w_G):")
         for k in K_trucks:
             for g in GHs.keys():
                 print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
-
 
     # 5) Dock allocations
     print("\n Dock allocations y[k,d,g]=1:")
@@ -586,8 +611,14 @@ else:
                 if val(y[k,d,g]) > 0.5:
                     print(f"  k={k} -> GH {g}, dock {d}")
                     any_y = True
-    if not any_y: print("  (ninguna)")
-
+    if not any_y: print("  (None)")
+    if GHs:
+        print("\n Dock congestion by GH:")
+        for g in GHs.keys():
+            w_pre_vals = [val(w_D[k, g]) for k in K_trucks]
+            w_dock_vals = [val(w_G[k, g]) for k in K_trucks]
+            dock_assignments = sum(1 for k in K_trucks for d in Docks if val(y[k, d, g]) > 0.5)
+            print(f"  GH {g}: assigned={dock_assignments}, pre-dock avg/max={sum(w_pre_vals)/len(w_pre_vals):.2f}/{max(w_pre_vals):.2f}, dock avg/max={sum(w_dock_vals)/len(w_dock_vals):.2f}/{max(w_dock_vals):.2f}")
 
     # 6) Precedence relations at GHs
     print("\n Precedences eta[k1,k2,g]=1:")
@@ -598,10 +629,10 @@ else:
                 if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
                     print(f"  GH {g}: k1={k1} antes de k2={k2}")
                     any_eta = True
-    if not any_eta: print("  (ninguna)")
+    if not any_eta: print("  (None)")
     print()
 
-    # 6) Capacity usage (sum of pickups served per truck)
+    # 7) Capacity usage (sum of pickups served per truck)
     print("Capacity usage per truck (weight and length):")
     for k in K_trucks:
         weight = 0.0; length = 0.0
@@ -610,4 +641,17 @@ else:
                 weight += W[i]; length += L[i]
         print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
     print("==================================\n")
+    print("\n Solver diagnostics:")
+    visited_nodes = [i for i in Nodes_P + Nodes_D if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)]
+    if visited_nodes:
+        early_slacks = [val(tau[i]) - E_win[i] for i in visited_nodes]
+        late_slacks = [D_win[i] - val(tau[i]) for i in visited_nodes]
+        on_time_count = sum(1 for i in visited_nodes if val(tau[i]) <= D_win[i] + 1e-6)
+        print(f"  On-time nodes: {on_time_count}/{len(visited_nodes)}")
+        #print(f"  Early slack min/avg/max: {min(early_slacks):.2f} / {sum(early_slacks)/len(early_slacks):.2f} / {max(early_slacks):.2f}") #how much you are above the earliest allowed time at a node.
+        #print(f"  Late slack min/avg/max: {min(late_slacks):.2f} / {sum(late_slacks)/len(late_slacks):.2f} / {max(late_slacks):.2f}") #ow much room is left before you hit the latest allowed time.
+    print(f"  Status={m.status}, Runtime={m.Runtime:.3f}s, Nodes={int(m.NodeCount)}")
+    print(f"  BestObj={m.objVal:.4f}, BestBound={m.ObjBound:.4f}, Gap={100.0*m.MIPGap:.2f}%")
+    print(f"  Trucks used: {len(used_trucks)}/{len(K_trucks)}")
+    
 
