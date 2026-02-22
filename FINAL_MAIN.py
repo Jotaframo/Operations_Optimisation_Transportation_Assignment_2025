@@ -16,7 +16,10 @@ full_list           = os.listdir(cwd)
 model=Model()
 M=10000 # Big M for time constraints (should be larger than Horizon + max processing time)
 
+
+
 ### DATA INPUT & PARAMETER DEFINITIONS ###
+
 tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
@@ -95,6 +98,7 @@ locs = {
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
 }
+
 node_loc_maps = [[52.2905, 4.7627]] # Depot
 
 for i in Nodes_P:
@@ -131,6 +135,7 @@ for i in  All_Nodes:
         E_win[i] = 0; D_win[i] = Horizon
     elif i in Nodes_D:
         E_win[i] = 0; D_win[i] = Horizon
+
 # Tightened Time Windows
 tightened_P_windows = []
 shuffled_Nodes=All_Nodes[1:].copy()
@@ -150,12 +155,8 @@ for i, j in Edges:
     dist_km = get_dist(node_loc_maps[i], node_loc_maps[j])
     T[i,j] = dist_km / Speed_mpm
 
-
-
 #Define Model
 m = gp.Model("GHDC-PDPTW")
-
-
 
 
 
@@ -311,7 +312,6 @@ for k in K_trucks:
 
 
 # [10] Time precedence for pickup nodes
-
 for (i, j) in Edges:
     if j in Nodes_P:  # j is a pickup node (the one following i)
         m.addConstr(
@@ -325,8 +325,7 @@ for g in GHs:
     nodes_g = GHs[g]  # delivery nodes of GH g
     for k in K_trucks:
         for (i, j) in Edges:
-            # j is a delivery node in GH g, and i is outside GH g
-            if j in nodes_g and i not in nodes_g and j in Nodes_D:
+            if j in nodes_g and i not in nodes_g and j in Nodes_D: # j is a delivery node in GH g, and i is outside GH g
                 m.addConstr(
                     tau[j] >= tau[i] + P[i] + T[i, j] \
                               - M * (1 - x[i, j, k]) \
@@ -339,7 +338,6 @@ for g, nodes in GHs.items(): #i and j belonging to the same GH
     for i in nodes:
         for j in nodes:
             if i != j and (i, j) in Edges:
-                # Sum x over all trucks (any truck making this move)
                 expr =  gp.quicksum(x[i, j, k] for k in K_trucks)
                 m.addConstr(tau[j] >= tau[i] + P[i] + T[i,j] - (1 - expr)*M, 
                             name=f"Eq12_IntraGroupTime_{i}_{j}")
@@ -361,7 +359,6 @@ for i in Nodes_P + Nodes_D:
 
 # [15] Weight Capacity (Total weight of Pickups visited by truck k must not exceed Q_W)
 for k in K_trucks:
-    # Summing flow into pickup nodes (i <= n)
     load_expr =  gp.quicksum(W[i] * x[j, i, k] 
                             for i in  All_Nodes 
                             for j in  All_Nodes if (j, i) in Edges)
@@ -423,8 +420,7 @@ for g in GHs:
                      m.addConstr(d_G[k, g] <= tau[i] + P[i] + (1 - x[i, j, k]) * M, 
                                  name=f"C24_DepGH_UB_k{k}_g{g}_i{i}")
 
-# [25] Waiting time at FF while docked
-# Waiting >= Departure - Arrival - Total Processing at that FF
+# [25] Waiting time at FF while docked (Waiting >= Departure - Arrival - Total Processing at that FF)
 for f in FFs:
     for k in K_trucks:
         # Sum of processing times for all nodes visited by k in FF f
@@ -508,7 +504,10 @@ for g in GHs:
 
 m.update()
 
+
+
 ### SOLVE & QUICK REPORT ###
+
 m.optimize()
 
 def val(v):
@@ -520,25 +519,24 @@ def val(v):
 if m.status not in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL]:
     print(f"[STATUS] {m.status}")
 else:
-    print("\n========== QUICK REPORT ==========")
-    print(f"Obj: {m.objVal:.4f}\n")
+    print("\n =================== SOLUTION REPORT ===================")
+    print(f" Objective Value: {m.objVal:.4f}\n")
 
     # (0) Calculate distances between all FFs and GHs
-    print("Distances (km) between FFs and GHs:")
+    print("\n Distances between FFs and GHs in [km]:")
     for f in FFs.keys():
         for g in GHs.keys():
             dist = get_dist(locs[f'FF{f}'], locs[f'GH{g}'])
-            print(f"  FF{f} -> GH{g}: {dist:.2f} km")
+            print(f"  FF{f} -> GH{g}: {dist:.2f} [km]")
 
-    # 1) Used arcs x=1 (per truck)
-    print("x[i,j,k]=1 (arcos recorridos):")
+    # 1) Used paths x=1 (per truck)
+    print("\n Paths used x[i,j,k]=1:")
     for k in K_trucks:
         used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
         print(f"  Truck {k}: {used}")
-    print()
 
     # 2) Simple route per truck (from depot following successors)
-    print("Ruta (desde 0):")
+    print("\n Route Followed (from depot 0):")
     for k in K_trucks:
         succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
         route = [0]
@@ -558,29 +556,29 @@ else:
     
 
     # 3) Node times (tau) and windows
-    print("tau por nodo (con ventanas):")
+    print("\n Tau per node with specified time windows:")
     for i in All_Nodes:
         t = val(tau[i])
         e = E_win.get(i,None); d = D_win.get(i,None)
         print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
-    print()
+   
 
     # 4) Times/waits at FF and GH (if applicable)
     if FFs:
-        print("FF (a_F, d_F, w_F):")
+        print("\n FF times (a_F, d_F, w_F):")
         for k in K_trucks:
             for f in FFs.keys():
                 print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
-        print()
+        
     if GHs:
-        print("GH (a_G, d_G, w_D, w_G):")
+        print("\n GH times (a_G, d_G, w_D, w_G):")
         for k in K_trucks:
             for g in GHs.keys():
                 print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
-        print()
 
-    # 5) Dock assignments and active precedences
-    print("Asignación de muelles y[k,d,g]=1:")
+
+    # 5) Dock allocations
+    print("\n Dock allocations y[k,d,g]=1:")
     any_y = False
     for k in K_trucks:
         for g in GHs.keys():
@@ -589,9 +587,10 @@ else:
                     print(f"  k={k} -> GH {g}, dock {d}")
                     any_y = True
     if not any_y: print("  (ninguna)")
-    print()
 
-    print("Precedencias eta[k1,k2,g]=1:")
+
+    # 6) Precedence relations at GHs
+    print("\n Precedences eta[k1,k2,g]=1:")
     any_eta = False
     for g in GHs.keys():
         for k1 in K_trucks:
@@ -603,7 +602,7 @@ else:
     print()
 
     # 6) Capacity usage (sum of pickups served per truck)
-    print("Uso de capacidad por camión:")
+    print("Capacity usage per truck (weight and length):")
     for k in K_trucks:
         weight = 0.0; length = 0.0
         for i in Nodes_P:
@@ -611,4 +610,4 @@ else:
                 weight += W[i]; length += L[i]
         print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
     print("==================================\n")
-# =================== END QUICK REPORT ===================
+
