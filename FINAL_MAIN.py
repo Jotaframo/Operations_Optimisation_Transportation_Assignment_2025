@@ -16,20 +16,18 @@ full_list           = os.listdir(cwd)
 model=Model()
 M=10000 
 ### DATA INPUT & PARAMETER DEFINITIONS ###
-
-# ULD & Truck Specs
-tighter_windows_instance=0 # Proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
-Delta_GH = 1 # Number of docks per GH (Assuming 'Very Large' instance setting or standard)
+tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
+Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 6
-K_trucks = [1, 2, 3] # Two trucks
-Weight_u = 1000   # kg
-Length_u = 1.534  # meters (Converted 153.4cm to m)
-Proc_Time = 15     # minutes
-Horizon = 480     # minutes
-Cap_W = 3000     # kg
-Cap_L = 13.6      # meters
-Speed_kmh = 35    # km/h
+n_uld = 6 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
+K_trucks = [1, 2, 3] #truck instances
+Weight_u = 1000   # weight of each ULD in [kg]
+Length_u = 1.534  # length of each UL in [m]
+Proc_Time = 15     # processing time of each uld at FF/GH in [minutes]
+Horizon = 480     # total time limit in [minutes]
+Cap_W = 3000     # weight Capacity of each Truck in [kg]
+Cap_L = 13.6      # length Capacity of each Truck in [m]
+Speed_kmh = 35    # speed in km/h (assumed constant for all edges)
 Speed_mpm = Speed_kmh / 60.0 # km per minute
 
 # Coordinates (DMS to Decimal Degrees)
@@ -38,8 +36,7 @@ def dms_to_dd(d, m, s, direction='N'):
     if direction in ['S', 'W']: dd *= -1
     return dd
 
-
-# Haversine Distance Function
+# Haversine Distance Function to get the distance in [km] between two lat/lon coordinates
 def get_dist(coord1, coord2):
     lat1, lon1, lat2, lon2 = map(radians, [coord1[0], coord1[1], coord2[0], coord2[1]])
     dlon = lon2 - lon1 
@@ -50,41 +47,33 @@ def get_dist(coord1, coord2):
     return c * r
 
 # --- NODE MAPPING ---
-# 0: Depot
-# 1-4: Pickups at FF1
-# 5-8: Pickups at FF2
-# 9-12: Deliveries at GH1 (Corresponding to 1-4)
-# 13-16: Deliveries at GH2 (Corresponding to 5-8)
 
-Nodes_P = list(range(1, n_uld+1))
-Nodes_D = list(range(n_uld+1, 2*n_uld+1))
-All_Nodes = [0] + Nodes_P + Nodes_D
+Nodes_P = list(range(1, n_uld+1)) # Pickup nodes (1 to n_uld)
+Nodes_D = list(range(n_uld+1, 2*n_uld+1)) # Delivery nodes (n_uld+1 to 2*n_uld)
+All_Nodes = [0] + Nodes_P + Nodes_D  # 0 is depot, followed by pickups and deliveries
 
-# Facility and Group Sets
 # FFs (Pickups)
-Facilities = {
-    1: Nodes_P[0:n_uld//2], # FF1 - slice to return list
+FFs = {
+    1: Nodes_P[0:n_uld//2], # FF1 
     2: Nodes_P[n_uld//2:], # FF2
 
 }
 # GHs (Deliveries)
-Groups = {
-    1: Nodes_D[0:n_uld//2],  # GH1 - slice to return list
+GGs = {
+    1: Nodes_D[0:n_uld//2],  # GH1 
     2: Nodes_D[n_uld//2:], # GH2
     
 }
 
-
-#Edges = [(i, j) for i in  All_Nodes for j in  All_Nodes if i != j]
 Edges = []
 for i in All_Nodes:
     for j in All_Nodes:
         if i == j: 
             continue
-        # 1) Prohibir salir del depósito a un delivery: 0 -> D
+        # 1) Forbid to go from depot to delivery: 0 -> D
         if i == 0 and j in Nodes_D:
             continue
-        # 2) Prohibir volver al depósito desde un pickup: P -> 0
+        # 2) Forbid returning to the depot from a pickup: P -> 0
         if i in Nodes_P and j == 0:
             continue
         Edges.append((i, j))
@@ -107,27 +96,26 @@ locs = {
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
 }
 
-
 # Map nodes to physical locations to calc distances
 node_loc_maps = [[52.2905, 4.7627]] # Depot
 
 # Calculate distances between all FFs and GHs
-print("Distances (km) between Facilities and Groups:")
-for f in Facilities.keys():
-    for g in Groups.keys():
+print("Distances (km) between FFs and GGs:")
+for f in FFs.keys():
+    for g in GGs.keys():
         dist = get_dist(locs[f'FF{f}'], locs[f'GH{g}'])
         print(f"  FF{f} -> GH{g}: {dist:.2f} km")
 
 for i in Nodes_P:
-    if i in Facilities[1]:
+    if i in FFs[1]:
         node_loc_maps.append(list(locs['FF1']))
-    elif i in Facilities[2]:
+    elif i in FFs[2]:
         node_loc_maps.append(list(locs['FF2']))
 
 for i in Nodes_D:
-    if i in Groups[1]:
+    if i in GGs[1]:
         node_loc_maps.append(list(locs['GH1']))
-    elif i in Groups[2]:
+    elif i in GGs[2]:
         node_loc_maps.append(list(locs['GH2']))
 
 #node_loc_maps= [[0, 0], [0, 1], [0, 2], [0, 3], [1, 1.5]]
@@ -183,25 +171,25 @@ tau = m.addVars( All_Nodes, vtype=GRB.CONTINUOUS, name="tau")
 tau_end = m.addVars(K_trucks, vtype=GRB.CONTINUOUS, name="tau_end")
 
 # Facility/Group Arrival/Departure times (indexed by Truck, Facility/Group ID)
-a_F = m.addVars(K_trucks, Facilities.keys(), vtype=GRB.CONTINUOUS, name="a_F")
-d_F = m.addVars(K_trucks, Facilities.keys(), vtype=GRB.CONTINUOUS, name="d_F")
-a_G = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="a_G")
+a_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="a_F")
+d_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="d_F")
+a_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="a_G")
 # d_G is used in later constraints (23+), but required if we were doing the full model
-d_G = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="d_G") 
+d_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="d_G") 
 
 
 # Waiting times
-w_D = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="w_D") # Waiting at GH before docking
-w_F = m.addVars(K_trucks, Facilities.keys(), vtype=GRB.CONTINUOUS, name="w_F") # Waiting at FF while docked
-w_G = m.addVars(K_trucks, Groups.keys(), vtype=GRB.CONTINUOUS, name="w_G") # Waiting at GH while docked
+w_D = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="w_D") # Waiting at GH before docking
+w_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="w_F") # Waiting at FF while docked
+w_G = m.addVars(K_trucks, GGs.keys(), vtype=GRB.CONTINUOUS, name="w_G") # Waiting at GH while docked
 
 # Scheduling and Dock Assignment variables
 # eta: 1 if k1 leaves g before k2 docks
-eta = m.addVars(K_trucks, K_trucks, Groups.keys(), vtype=GRB.BINARY, name="eta") 
+eta = m.addVars(K_trucks, K_trucks, GGs.keys(), vtype=GRB.BINARY, name="eta") 
 # y: 1 if truck k assigned to dock d at GH g
-y = m.addVars(K_trucks, Docks, Groups.keys(), vtype=GRB.BINARY, name="y")
+y = m.addVars(K_trucks, Docks, GGs.keys(), vtype=GRB.BINARY, name="y")
 # z: Linearization variable for y*y. Relaxed to continuous [0,1] as per paper Section 3.3
-z = m.addVars(K_trucks, Docks, K_trucks, Docks, Groups.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
+z = m.addVars(K_trucks, Docks, K_trucks, Docks, GGs.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
 
 ### OBJECTIVE FUNCTION ###
 
@@ -212,15 +200,15 @@ travel_cost = gp.quicksum(T[i, j] * x[i, j, k]
 # Term 2: Waiting time at GH queues (Before Docking)
 wait_gh_dock_cost = gp.quicksum(w_D[k, g] 
                                 for k in K_trucks 
-                                for g in Groups.keys())
+                                for g in GGs.keys())
 # Term 3: Waiting time at GH docks (During Service/Windows)
 wait_gh_service_cost = gp.quicksum(w_G[k, g] 
                                    for k in K_trucks 
-                                   for g in Groups.keys())
+                                   for g in GGs.keys())
 # Term 4: Waiting time at FF docks (During Service/Windows)
 wait_ff_cost = gp.quicksum(w_F[k, f] 
                            for k in K_trucks 
-                           for f in Facilities.keys())
+                           for f in FFs.keys())
 
 m.setObjective(travel_cost + wait_gh_dock_cost + wait_gh_service_cost + wait_ff_cost, 
                GRB.MINIMIZE)
@@ -294,34 +282,34 @@ for k in K_trucks:
             )
 
 for k in K_trucks:
-    for f in Facilities:
+    for f in FFs:
         m.addConstr(
             
             gp.quicksum(
                 x[j, i, k]
-                for i in Facilities[f]
+                for i in FFs[f]
                 for j in All_Nodes
-                if (j, i) in Edges and (j not in Facilities[f]) and j != 0
+                if (j, i) in Edges and (j not in FFs[f]) and j != 0
             )
             
             + gp.quicksum(
-                x[0, i, k] for i in Facilities[f] if (0, i) in Edges
+                x[0, i, k] for i in FFs[f] if (0, i) in Edges
             )
             <= 1,
             name=f"visit_FF_at_most_once_f{f}_k{k}"
         )
 
 for k in K_trucks:
-    for g in Groups:
+    for g in GGs:
         m.addConstr(
             gp.quicksum(
                 x[j, i, k]
-                for i in Groups[g]
+                for i in GGs[g]
                 for j in All_Nodes
-                if (j, i) in Edges and (j not in Groups[g]) and j != 0
+                if (j, i) in Edges and (j not in GGs[g]) and j != 0
             )
             + gp.quicksum(
-                x[0, i, k] for i in Groups[g] if (0, i) in Edges
+                x[0, i, k] for i in GGs[g] if (0, i) in Edges
             )
             <= 1,
             name=f"visit_GH_at_most_once_g{g}_k{k}"
@@ -339,8 +327,8 @@ for (i, j) in Edges:
         )
 
 # (10) time precedence for entering a GH
-for g in Groups:
-    nodes_g = Groups[g]  # delivery nodes of GH g
+for g in GGs:
+    nodes_g = GGs[g]  # delivery nodes of GH g
     for k in K_trucks:
         for (i, j) in Edges:
             # j is a delivery node in GH g, and i is outside GH g
@@ -354,7 +342,7 @@ for g in Groups:
 
 # (11) Time Precedence: Arrival at GH from outside (Waiting for Dock allowed)
 # Logic: If moving from i (outside GH g) to j (inside GH g), account for travel + waiting w_D
-#for g, g_nodes in Groups.items():      # For each Ground Handler group
+#for g, g_nodes in GGs.items():      # For each Ground Handler group
     #for j in g_nodes:                  # For each node belonging to this GH
         #for k in K_trucks:             # For each truck
             #for i in All_Nodes:        # Scan potential origin nodes
@@ -367,10 +355,10 @@ for g in Groups:
                        # name=f"Eq11_GH_Arrival_Wait_{g}_{k}_{i}_{j}"
                    # )
 
-# (12) Time consistency within GH Groups
+# (12) Time consistency within GH GGs
 # Ensures valid flow of time when moving between nodes inside the same Ground Handler
 
-for g, nodes in Groups.items(): #i and j belonging to the same GH
+for g, nodes in GGs.items(): #i and j belonging to the same GH
     for i in nodes:
         for j in nodes:
             if i != j and (i, j) in Edges:
@@ -380,7 +368,7 @@ for g, nodes in Groups.items(): #i and j belonging to the same GH
                             name=f"Eq12_IntraGroupTime_{i}_{j}")
 
 # (13) Vehicle End Time
-# Solo para nodos i con arco permitido i -> 0 (evita KeyError cuando P->0 está prohibido)
+# Only for nodes i with an allowed arc i -> 0 (avoids KeyError when P->0 is forbidden)
 for k in K_trucks:
     for i in All_Nodes:
         if i != 0 and (i, 0) in Edges:
@@ -417,7 +405,7 @@ for k in K_trucks:
 
 # (17 & 18) Facility Arrival Time (a_F)
 # If truck k travels i -> j, and j is in Facility f but i is NOT, record arrival time.
-for f, f_nodes in Facilities.items():
+for f, f_nodes in FFs.items():
     for k in K_trucks:
         for i, j in Edges:
             if j in f_nodes and i not in f_nodes:
@@ -430,7 +418,7 @@ for f, f_nodes in Facilities.items():
 
 # (19 & 20) Facility Departure Time (d_F)
 # If truck k travels i -> j, and i is in Facility f but j is NOT, record departure time.
-for f, f_nodes in Facilities.items():
+for f, f_nodes in FFs.items():
     for k in K_trucks:
         for i, j in Edges:
             if i in f_nodes and j not in f_nodes:
@@ -443,7 +431,7 @@ for f, f_nodes in Facilities.items():
 
 # (21 & 22) Group Arrival Time (a_G)
 # If truck k travels i -> j, and j is in Group g but i is NOT, record arrival time.
-for g, g_nodes in Groups.items():
+for g, g_nodes in GGs.items():
     for k in K_trucks:
         for i, j in Edges:
             if j in g_nodes and i not in g_nodes:
@@ -456,44 +444,44 @@ for g, g_nodes in Groups.items():
 
 # (23) Departure time from GH (Lower Bound)
 # Ensures departure time >= start service of the last node served in that GH + processing
-for g in Groups:
+for g in GGs:
     for k in K_trucks:
-        for i in Groups[g]: # Node in GH
+        for i in GGs[g]: # Node in GH
             for j in  All_Nodes: # Possible next node
-                if j not in Groups[g] and (i,j) in Edges:
+                if j not in GGs[g] and (i,j) in Edges:
                      m.addConstr(d_G[k, g] >= tau[i] + P[i] - (1 - x[i, j, k]) * M, 
                                  name=f"C23_DepGH_LB_k{k}_g{g}_i{i}")
 
 # (24) Departure time from GH (Upper Bound)
 # Tightens the departure time definition
-for g in Groups:
+for g in GGs:
     for k in K_trucks:
-        for i in Groups[g]: 
+        for i in GGs[g]: 
             for j in  All_Nodes:
-                if j not in Groups[g] and (i,j) in Edges:
+                if j not in GGs[g] and (i,j) in Edges:
                      m.addConstr(d_G[k, g] <= tau[i] + P[i] + (1 - x[i, j, k]) * M, 
                                  name=f"C24_DepGH_UB_k{k}_g{g}_i{i}")
 
 # (25) Waiting time at FF while docked
 # Waiting >= Departure - Arrival - Total Processing at that FF
-for f in Facilities:
+for f in FFs:
     for k in K_trucks:
         # Sum of processing times for all nodes visited by k in FF f
-        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in Facilities[f] for j in  All_Nodes if (j, i) in Edges)
+        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in FFs[f] for j in  All_Nodes if (j, i) in Edges)
         m.addConstr(w_F[k, f] >= d_F[k, f] - a_F[k, f] - proc_sum, 
                     name=f"C25_WaitFF_k{k}_f{f}")
 
 # (26) Waiting time at GH while docked
 # Waiting >= Departure - Arrival - Waiting before docking - Total Processing at that GH
-for g in Groups:
+for g in GGs:
     for k in K_trucks:
-        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in Groups[g] for j in  All_Nodes if (j, i) in Edges)
+        proc_sum =  gp.quicksum(P[i] * x[j, i, k] for i in GGs[g] for j in  All_Nodes if (j, i) in Edges)
         m.addConstr(w_G[k, g] >= d_G[k, g] - a_G[k, g] - w_D[k, g] - proc_sum, 
                     name=f"C26_WaitGH_k{k}_g{g}")
 
 # (27) Overlap variable definition (Lower Bound logic)
 # If eta=1, then Departure of k1 <= Arrival of k2 + Waiting of k2 (k1 leaves before k2 uses dock)
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             m.addConstr(d_G[k1, g] - a_G[k2, g] - w_D[k2, g] + M * eta[k1, k2, g] <= M,
@@ -501,7 +489,7 @@ for g in Groups:
 
 # (28) Overlap variable definition (Upper Bound logic)
 # Enforces the binary nature relative to the time difference
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             m.addConstr(-d_G[k1, g] + a_G[k2, g] + w_D[k2, g] - M * eta[k1, k2, g] <= 0,
@@ -509,11 +497,11 @@ for g in Groups:
 
 # (29) Dock Assignment Constraint
 # Each truck visiting GH g must be assigned exactly one dock there
-for g in Groups:
+for g in GGs:
     for k in K_trucks:
         visit_from_outside = gp.quicksum(
-            x[j, i, k] for i in Groups[g] for j in All_Nodes
-            if (j, i) in Edges and (j not in Groups[g])
+            x[j, i, k] for i in GGs[g] for j in All_Nodes
+            if (j, i) in Edges and (j not in GGs[g])
         )
         m.addConstr(
             gp.quicksum(y[k, d, g] for d in Docks) == visit_from_outside,
@@ -522,7 +510,7 @@ for g in Groups:
 
 # (30) Linearization of z (Part 1)
 # z <= y1
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -533,7 +521,7 @@ for g in Groups:
 
 # (31) Linearization of z (Part 2)
 # z <= y2
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -544,7 +532,7 @@ for g in Groups:
 
 # (32) Linearization of z (Part 3)
 # y1 + y2 - 1 <= z (Forces z=1 if both y1 and y2 are 1)
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -556,7 +544,7 @@ for g in Groups:
 # (33) Dock Capacity / Non-overlap constraint
 # Two trucks can be assigned to the SAME dock (d1) only if they do not overlap in time.
 # If z=1 (both on same dock), then eta[k1,k2] + eta[k2,k1] must be >= 1 (one precedes the other)
-for g in Groups:
+for g in GGs:
     for k1 in K_trucks:
         for k2 in K_trucks:
             if k1 < k2:
@@ -586,21 +574,21 @@ else:
     print("\n========== QUICK REPORT ==========")
     print(f"Obj: {m.objVal:.4f}\n")
 
-    # 1) Arcos usados x=1 (por camión)
+    # 1) Used arcs x=1 (per truck)
     print("x[i,j,k]=1 (arcos recorridos):")
     for k in K_trucks:
         used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
         print(f"  Truck {k}: {used}")
     print()
 
-    # 2) Ruta sencilla por camión (desde depot siguiendo sucesores)
+    # 2) Simple route per truck (from depot following successors)
     print("Ruta (desde 0):")
     for k in K_trucks:
         succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
         route = [0]
         cur = 0
         visited = set([0])
-        # evita bucles infinitos en caso patológico
+        # avoids infinite loops in pathological cases
         for _ in range(len(All_Nodes)+2):
             if cur in succ:
                 nxt = succ[cur]
@@ -613,7 +601,7 @@ else:
         print(f"  Truck {k}: {' -> '.join(map(str, route))}")
     
 
-    # 3) Tiempos por nodo (tau) y ventanas
+    # 3) Node times (tau) and windows
     print("tau por nodo (con ventanas):")
     for i in All_Nodes:
         t = val(tau[i])
@@ -621,25 +609,25 @@ else:
         print(f"  node {i:>2}: tau={t:7.2f}  [E={e}, D={d}]")
     print()
 
-    # 4) Tiempos/esperas en FF y GH (si aplica)
-    if Facilities:
+    # 4) Times/waits at FF and GH (if applicable)
+    if FFs:
         print("FF (a_F, d_F, w_F):")
         for k in K_trucks:
-            for f in Facilities.keys():
+            for f in FFs.keys():
                 print(f"  k={k}, FF={f}: a_F={val(a_F[k,f]):.2f}, d_F={val(d_F[k,f]):.2f}, w_F={val(w_F[k,f]):.2f}")
         print()
-    if Groups:
+    if GGs:
         print("GH (a_G, d_G, w_D, w_G):")
         for k in K_trucks:
-            for g in Groups.keys():
+            for g in GGs.keys():
                 print(f"  k={k}, GH={g}: a_G={val(a_G[k,g]):.2f}, d_G={val(d_G[k,g]):.2f}, w_D={val(w_D[k,g]):.2f}, w_G={val(w_G[k,g]):.2f}")
         print()
 
-    # 5) Asignación de muelles y precedencias activas
+    # 5) Dock assignments and active precedences
     print("Asignación de muelles y[k,d,g]=1:")
     any_y = False
     for k in K_trucks:
-        for g in Groups.keys():
+        for g in GGs.keys():
             for d in Docks:
                 if val(y[k,d,g]) > 0.5:
                     print(f"  k={k} -> GH {g}, dock {d}")
@@ -649,7 +637,7 @@ else:
 
     print("Precedencias eta[k1,k2,g]=1:")
     any_eta = False
-    for g in Groups.keys():
+    for g in GGs.keys():
         for k1 in K_trucks:
             for k2 in K_trucks:
                 if k1 != k2 and val(eta[k1,k2,g]) > 0.5:
@@ -658,7 +646,7 @@ else:
     if not any_eta: print("  (ninguna)")
     print()
 
-    # 6) Uso de capacidad (suma de pickups atendidos por camión)
+    # 6) Capacity usage (sum of pickups served per truck)
     print("Uso de capacidad por camión:")
     for k in K_trucks:
         weight = 0.0; length = 0.0
