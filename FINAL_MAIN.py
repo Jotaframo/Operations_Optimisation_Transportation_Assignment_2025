@@ -71,13 +71,16 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
 
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
-    for idx, (k, route) in enumerate(routes.items()):
+    for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
         if len(route) < 2:
             continue
         color = colors[idx % len(colors)]
+        route_distance_km = sum(
+            get_dist(node_coords[route[pos]], node_coords[route[pos + 1]]) for pos in range(len(route) - 1)
+        )
         xs = [node_coords[i][1] for i in route]
         ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k}", alpha=0.5)
+        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.5) # Travelled Paths
         ax.scatter(xs, ys, color=color, s=30)
         for start_idx in range(len(route) - 1):
             x0, y0 = node_coords[route[start_idx]][1], node_coords[route[start_idx]][0]
