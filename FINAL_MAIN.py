@@ -63,9 +63,27 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     for f, nodes in ff_nodes.items():
         for i in nodes:
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
+            ax.annotate(
+                str(f),
+                xy=(node_coords[i][1], node_coords[i][0]),
+                xytext=(10, 10),
+                textcoords="offset points",
+                fontsize=12,
+                color="#1f77b4",
+                weight="bold",
+            )
     for g, nodes in gh_nodes.items():
         for i in nodes:
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
+            ax.annotate(
+                str(g),
+                xy=(node_coords[i][1], node_coords[i][0]),
+                xytext=(10, 10),
+                textcoords="offset points",
+                fontsize=12,
+                color="#ff7f0e",
+                weight="bold",
+            )
 
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
