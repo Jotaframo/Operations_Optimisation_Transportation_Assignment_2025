@@ -7,6 +7,7 @@ import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
 from typing import Dict, List
+import matplotlib.pyplot as plt
 
 
 # Get path to current folder
@@ -52,12 +53,6 @@ def get_dist(coord1, coord2):
     return c * r
 
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("Matplotlib is not installed. Run: pip install matplotlib")
-        return
-
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot depot
@@ -67,10 +62,10 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     # Plot FFs and GHs
     for f, nodes in ff_nodes.items():
         for i in nodes:
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=60, marker="o")
+            ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
     for g, nodes in gh_nodes.items():
         for i in nodes:
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=60, marker="^")
+            ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
 
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
@@ -82,14 +77,23 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         color = colors[idx % len(colors)]
         xs = [node_coords[i][1] for i in route]
         ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k}")
+        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k}", alpha=0.5)
         ax.scatter(xs, ys, color=color, s=30)
+        for start_idx in range(len(route) - 1):
+            x0, y0 = node_coords[route[start_idx]][1], node_coords[route[start_idx]][0]
+            x1, y1 = node_coords[route[start_idx + 1]][1], node_coords[route[start_idx + 1]][0]
+            ax.annotate(
+                "",
+                xy=(x1, y1),
+                xytext=(x0, y0),
+                arrowprops=dict(arrowstyle="->", color=color, lw=1.5, shrinkA=6, shrinkB=6),
+            )
 
     ax.set_title("Truck Routes (FFs/GHs)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.legend(loc="best")
-    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.grid(True, linestyle="--", alpha=0.8)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
