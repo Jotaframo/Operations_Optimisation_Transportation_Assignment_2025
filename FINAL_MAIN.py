@@ -101,6 +101,153 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
 
+def plot_truck_timeline_gantt(
+    routes: Dict[int, List[int]],
+    trucks: List[int],
+    travel_time: Dict,
+    tau_vals: Dict[int, float],
+    proc_times: Dict[int, float],
+    nodes_p: List[int],
+    gh_nodes: Dict[int, List[int]],
+    a_g_vals: Dict,
+    d_g_vals: Dict,
+    w_d_vals: Dict,
+    tau_end_vals: Dict[int, float],
+    output_path: str = "truck_timeline.png",
+):
+    fig_height = max(4, 1.2 * len(trucks) + 2)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+
+    phase_colors = {
+        "travel": "#1f77b4",
+        "ff_service": "#2ca02c",
+        "gh_queue": "#ff7f0e",
+        "gh_dock": "#9467bd",
+        "return": "#7f7f7f",
+    }
+    phase_labels = {
+        "travel": "Travel",
+        "ff_service": "Service at FF",
+        "gh_queue": "Queue at GH",
+        "gh_dock": "Dock service at GH",
+        "return": "Return",
+    }
+
+    used_labels = set()
+    eps = 1e-6
+
+    def add_phase_bar(y_pos, start, duration, phase):
+        if duration <= eps:
+            return
+        label = phase_labels[phase] if phase not in used_labels else None
+        if label is not None:
+            used_labels.add(phase)
+        ax.barh(
+            y=y_pos,
+            width=duration,
+            left=start,
+            height=0.62,
+            color=phase_colors[phase],
+            edgecolor="white",
+            linewidth=0.5,
+            alpha=0.9,
+            label=label,
+        )
+
+    for row, k in enumerate(trucks):
+        route = routes.get(k, [])
+
+        if len(route) >= 2:
+            for pos in range(len(route) - 1):
+                i = route[pos]
+                j = route[pos + 1]
+                travel_start = tau_vals.get(0, 0.0) if i == 0 else tau_vals.get(i, 0.0) + proc_times.get(i, 0.0)
+                travel_duration = travel_time.get((i, j), 0.0)
+                phase = "return" if j == 0 else "travel"
+                add_phase_bar(row, travel_start, travel_duration, phase)
+
+            for node in route:
+                if node in nodes_p:
+                    add_phase_bar(row, tau_vals.get(node, 0.0), proc_times.get(node, 0.0), "ff_service")
+
+        for g in gh_nodes.keys():
+            arr = a_g_vals.get((k, g), 0.0)
+            dep = d_g_vals.get((k, g), 0.0)
+            queue = max(0.0, w_d_vals.get((k, g), 0.0))
+            dock_start = arr + queue
+            dock_duration = max(0.0, dep - dock_start)
+
+            add_phase_bar(row, arr, queue, "gh_queue")
+            add_phase_bar(row, dock_start, dock_duration, "gh_dock")
+
+    max_end = max([tau_end_vals.get(k, 0.0) for k in trucks] + [1.0])
+    ax.set_xlim(0, max_end * 1.05)
+    ax.set_ylim(-0.8, len(trucks) - 0.2)
+    ax.set_yticks(range(len(trucks)))
+    ax.set_yticklabels([f"Truck {k}" for k in trucks])
+    ax.set_xlabel("Time [min]")
+    ax.set_title("Truck Timeline")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.35)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    print(f"Truck timeline Gantt saved to: {output_path}")
+
+def plot_ff_gh_flow_matrix(
+    served_pickups: List[int],
+    n_pickups: int,
+    ff_nodes: Dict[int, List[int]],
+    gh_nodes: Dict[int, List[int]],
+    output_path: str = "ff_gh_flow_matrix.png",
+):
+    ff_ids = sorted(ff_nodes.keys())
+    gh_ids = sorted(gh_nodes.keys())
+
+    pickup_to_ff = {}
+    for f, nodes in ff_nodes.items():
+        for node in nodes:
+            pickup_to_ff[node] = f
+
+    delivery_to_gh = {}
+    for g, nodes in gh_nodes.items():
+        for node in nodes:
+            delivery_to_gh[node] = g
+
+    ff_pos = {f: idx for idx, f in enumerate(ff_ids)}
+    gh_pos = {g: idx for idx, g in enumerate(gh_ids)}
+    flow_matrix = np.zeros((len(ff_ids), len(gh_ids)), dtype=int)
+
+    for pickup_node in served_pickups:
+        ff_id = pickup_to_ff.get(pickup_node)
+        delivery_node = pickup_node + n_pickups
+        gh_id = delivery_to_gh.get(delivery_node)
+        if ff_id is None or gh_id is None:
+            continue
+        flow_matrix[ff_pos[ff_id], gh_pos[gh_id]] += 1
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    im = ax.imshow(flow_matrix, cmap="Blues", aspect="auto")
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Number of ULDs")
+
+    ax.set_xticks(np.arange(len(gh_ids)))
+    ax.set_yticks(np.arange(len(ff_ids)))
+    ax.set_xticklabels([f"GH{g}" for g in gh_ids])
+    ax.set_yticklabels([f"FF{f}" for f in ff_ids])
+    ax.set_xlabel("Ground Handler (GH)")
+    ax.set_ylabel("Freight Forwarder (FF)")
+    ax.set_title("FF to GH Flow Matrix (ULD Count)")
+
+    for i in range(flow_matrix.shape[0]):
+        for j in range(flow_matrix.shape[1]):
+            val_ij = flow_matrix[i, j]
+            txt_color = "white" if val_ij > flow_matrix.max() / 2 and flow_matrix.max() > 0 else "black"
+            ax.text(j, i, f"{val_ij}", ha="center", va="center", color=txt_color, fontsize=11)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    print(f"FF-to-GH flow matrix saved to: {output_path}")
+
 #NODE MAPPING
 Nodes_P = list(range(1, n_uld+1)) # Pickup nodes (1 to n_uld)
 Nodes_D = list(range(n_uld+1, 2*n_uld+1)) # Delivery nodes (n_uld+1 to 2*n_uld)
@@ -619,12 +766,16 @@ else:
     
     print("\n Truck utilization and route:")
     used_trucks = []
+    travel_time_by_truck = {}
+    distance_by_truck = {}
     for k in K_trucks:
         used_arcs = [(i, j) for (i, j) in Edges if val(x[i, j, k]) > 0.5]
         used_flag = 1 if used_arcs else 0
         if used_flag:
             used_trucks.append(k)
         route_travel = sum(T[i, j] for (i, j) in used_arcs)
+        travel_time_by_truck[k] = route_travel
+        distance_by_truck[k] = route_travel * Speed_mpm
         first_departure = val(tau[0]) if any(i == 0 for (i, _) in used_arcs) else float('nan')
         end_time = val(tau_end[k])
         active_time = max(0.0, end_time - (val(tau[0]) if used_flag else 0.0))
@@ -708,5 +859,30 @@ else:
     print(f"  Trucks used: {len(used_trucks)}/{len(K_trucks)}")
 
     plot_routes(routes, node_loc_maps, FFs, GHs)
+    plot_truck_timeline_gantt(
+        routes=routes,
+        trucks=K_trucks,
+        travel_time=T,
+        tau_vals={i: val(tau[i]) for i in All_Nodes},
+        proc_times=P,
+        nodes_p=Nodes_P,
+        gh_nodes=GHs,
+        a_g_vals={(k, g): val(a_G[k, g]) for k in K_trucks for g in GHs.keys()},
+        d_g_vals={(k, g): val(d_G[k, g]) for k in K_trucks for g in GHs.keys()},
+        w_d_vals={(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
+        tau_end_vals={k: val(tau_end[k]) for k in K_trucks},
+    )
+    
+    served_pickups = [
+        i for i in Nodes_P
+        if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)
+    ]
+
+    plot_ff_gh_flow_matrix(
+        served_pickups=served_pickups,
+        n_pickups=n_uld,
+        ff_nodes=FFs,
+        gh_nodes=GHs,
+    )
     
 
