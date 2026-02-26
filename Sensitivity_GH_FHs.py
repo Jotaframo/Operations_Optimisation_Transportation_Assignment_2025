@@ -27,7 +27,7 @@ M=10000 # Big M for time constraints (should be larger than Horizon + max proces
 tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 6 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
+n_uld = 10 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
 K_trucks = [1, 2, 3] #truck instances
 Weight_u = 1000   # weight of each ULD in [kg]
 Length_u = 1.534  # length of each UL in [m]
@@ -300,6 +300,19 @@ W = {0: 0} # Weights
 L = {0: 0} # Lengths
 
 
+
+# ALL_LOCS = {
+#     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+#     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+#     'FF3': (dms_to_dd(52,17,0.9108), dms_to_dd(4,46,9.0422)),
+#     'FF4': (dms_to_dd(52,16,29.579), dms_to_dd(4,44,28.912)),
+#     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+#     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+#     'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302)),
+#     'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))
+    
+# }
+
 # Locations
 locs_11 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
@@ -308,11 +321,20 @@ locs_11 = {
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
 }
 
+
+print(locs_11)
+
 locs_2 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'FF3': (dms_to_dd(52,17,0.9108), dms_to_dd(4,46,9.0422)),
+    'FF4': (dms_to_dd(52,16,29.579), dms_to_dd(4,44,28.912)),
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
-    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0))
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+    'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302)),
+    'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))
+
+    
 }
 # SELECT YOU LOCATION SET HERE
 locs = locs_2
@@ -758,6 +780,12 @@ m.update()
 
 ### SOLVE & QUICK REPORT ###
 
+print(f"Model has {m.numConstrs} constraints and {m.numVars} variables")
+print("\nFF and GH node assignments:")
+for f in FFs.keys():
+    print(f"  FF{f}: {FFs[f]}")
+for g in GHs.keys():
+    print(f"  GH{g}: {GHs[g]}")
 m.optimize()
 
 def val(v):
