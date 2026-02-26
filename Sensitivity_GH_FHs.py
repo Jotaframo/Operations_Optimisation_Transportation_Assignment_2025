@@ -27,7 +27,7 @@ M=10000 # Big M for time constraints (should be larger than Horizon + max proces
 tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 4 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
+n_uld = 6 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
 K_trucks = [1, 2, 3] #truck instances
 Weight_u = 1000   # weight of each ULD in [kg]
 Length_u = 1.534  # length of each UL in [m]
@@ -62,25 +62,36 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter(depot[1], depot[0], c="black", s=80, marker="s", label="Depot")
 
     # Plot FFs and GHs
+    def _node_label_offset(node_idx: int, total_nodes: int, base_x: int, base_y: int):
+        if total_nodes <= 1:
+            return (base_x, base_y)
+        spread = 12
+        centered_rank = node_idx - (total_nodes - 1) / 2
+        return (base_x, base_y + int(centered_rank * spread))
+
     for f, nodes in ff_nodes.items():
-        for i in nodes:
+        total_nodes = len(nodes)
+        for node_idx, i in enumerate(nodes):
+            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
             ax.annotate(
                 f"N{i} (FF{f})",
                 xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=(10, 10),
+                xytext=offset_xy,
                 textcoords="offset points",
                 fontsize=10,
                 color="#1f77b4",
                 weight="bold",
             )
     for g, nodes in gh_nodes.items():
-        for i in nodes:
+        total_nodes = len(nodes)
+        for node_idx, i in enumerate(nodes):
+            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
             ax.annotate(
                 f"N{i} (GH{g})",
                 xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=(10, 10),
+                xytext=offset_xy,
                 textcoords="offset points",
                 fontsize=10,
                 color="#ff7f0e",
@@ -120,6 +131,9 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
+
+    plt.show()
+
 
 def plot_truck_timeline_gantt(
     routes: Dict[int, List[int]],
@@ -350,7 +364,7 @@ locs_3 = {
 }
 
 locs_4 = {
-    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
 }
