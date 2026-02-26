@@ -27,7 +27,7 @@ M=10000 # Big M for time constraints (should be larger than Horizon + max proces
 tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
 Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
-n_uld = 10 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
+n_uld = 4 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
 K_trucks = [1, 2, 3] #truck instances
 Weight_u = 1000   # weight of each ULD in [kg]
 Length_u = 1.534  # length of each UL in [m]
@@ -66,11 +66,11 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         for i in nodes:
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
             ax.annotate(
-                str(f),
+                f"N{i} (FF{f})",
                 xy=(node_coords[i][1], node_coords[i][0]),
                 xytext=(10, 10),
                 textcoords="offset points",
-                fontsize=12,
+                fontsize=10,
                 color="#1f77b4",
                 weight="bold",
             )
@@ -78,11 +78,11 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         for i in nodes:
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
             ax.annotate(
-                str(g),
+                f"N{i} (GH{g})",
                 xy=(node_coords[i][1], node_coords[i][0]),
                 xytext=(10, 10),
                 textcoords="offset points",
-                fontsize=12,
+                fontsize=10,
                 color="#ff7f0e",
                 weight="bold",
             )
@@ -288,6 +288,14 @@ for i in All_Nodes:
         # 2) Forbid returning to the depot from a pickup: P -> 0
         if i in Nodes_P and j == 0:
             continue
+        # 3) Forbid going to a delivery before its corresponding pickup
+        if j in Nodes_D:
+            pickup_node = j - n_uld
+            if pickup_node in Nodes_P:
+                # Don't allow edge to delivery unless pickup was already visited
+                # This requires checking if i is the pickup or comes after it
+                if i != pickup_node and i not in Nodes_D:
+                    continue
         Edges.append((i, j))
 
 
@@ -327,15 +335,36 @@ print(locs_11)
 locs_2 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
-    'FF3': (dms_to_dd(52,17,0.9108), dms_to_dd(4,46,9.0422)),
-    'FF4': (dms_to_dd(52,16,29.579), dms_to_dd(4,44,28.912)),
+    'FF3': (dms_to_dd(52,15,0.9108), dms_to_dd(4,46,9.0422)),
+    'FF4': (dms_to_dd(52,18,29.579), dms_to_dd(4,44,28.912)),
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
     'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302)),
-    'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))
-
-    
+    'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))  
 }
+
+locs_3 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)) 
+}
+
+locs_4 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+}
+
+locs_4 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+}
+
+
+
+
+
 # SELECT YOU LOCATION SET HERE
 locs = locs_2
 

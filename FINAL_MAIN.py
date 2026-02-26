@@ -52,6 +52,7 @@ def get_dist(coord1, coord2):
     r = 6371 # Radius of earth in kilometers
     return c * r
 
+# Plotting Functions
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
     fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -60,27 +61,38 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter(depot[1], depot[0], c="black", s=80, marker="s", label="Depot")
 
     # Plot FFs and GHs
+    def _node_label_offset(node_idx: int, total_nodes: int, base_x: int, base_y: int):
+        if total_nodes <= 1:
+            return (base_x, base_y)
+        spread = 12
+        centered_rank = node_idx - (total_nodes - 1) / 2
+        return (base_x, base_y + int(centered_rank * spread))
+
     for f, nodes in ff_nodes.items():
-        for i in nodes:
+        total_nodes = len(nodes)
+        for node_idx, i in enumerate(nodes):
+            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
             ax.annotate(
-                str(f),
+                f"N{i} (FF{f})",
                 xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=(10, 10),
+                xytext=offset_xy,
                 textcoords="offset points",
-                fontsize=12,
+                fontsize=10,
                 color="#1f77b4",
                 weight="bold",
             )
     for g, nodes in gh_nodes.items():
-        for i in nodes:
+        total_nodes = len(nodes)
+        for node_idx, i in enumerate(nodes):
+            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
             ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
             ax.annotate(
-                str(g),
+                f"N{i} (GH{g})",
                 xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=(10, 10),
+                xytext=offset_xy,
                 textcoords="offset points",
-                fontsize=12,
+                fontsize=10,
                 color="#ff7f0e",
                 weight="bold",
             )
@@ -118,6 +130,7 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
+
 
 def plot_truck_timeline_gantt(
     routes: Dict[int, List[int]],
@@ -295,6 +308,14 @@ for i in All_Nodes:
         # 2) Forbid returning to the depot from a pickup: P -> 0
         if i in Nodes_P and j == 0:
             continue
+        # 3) Forbid going to a delivery before its corresponding pickup
+        if j in Nodes_D:
+            pickup_node = j - n_uld
+            if pickup_node in Nodes_P:
+                # Don't allow edge to delivery unless pickup was already visited
+                # This requires checking if i is the pickup or comes after it
+                if i != pickup_node and i not in Nodes_D:
+                    continue
         Edges.append((i, j))
 
 
