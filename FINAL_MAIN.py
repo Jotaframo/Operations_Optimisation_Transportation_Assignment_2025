@@ -100,6 +100,30 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
 
+    edge_to_trucks = {}
+    for k, route in routes.items():
+        if len(route) < 2:
+            continue
+        for start_idx in range(len(route) - 1):
+            edge = (route[start_idx], route[start_idx + 1])
+            if edge not in edge_to_trucks:
+                edge_to_trucks[edge] = set()
+            edge_to_trucks[edge].add(k)
+
+    edge_curvature_by_truck = {}
+    for edge, trucks_on_edge in edge_to_trucks.items():
+        truck_order = sorted(trucks_on_edge)
+        n_trucks = len(truck_order)
+        base_rad = 0.09
+        if n_trucks == 1:
+            edge_curvature_by_truck[(edge, truck_order[0])] = base_rad
+            continue
+        spread = 0.04
+        center = (n_trucks - 1) / 2.0
+        for pos, truck_id in enumerate(truck_order):
+            rad = base_rad + (pos - center) * spread
+            edge_curvature_by_truck[(edge, truck_id)] = max(-0.6, min(0.6, rad))
+
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
         if len(route) < 2:
@@ -110,16 +134,27 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         )
         xs = [node_coords[i][1] for i in route]
         ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.5) # Travelled Paths
+        ax.plot([], [], color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.8)
         ax.scatter(xs, ys, color=color, s=30)
         for start_idx in range(len(route) - 1):
-            x0, y0 = node_coords[route[start_idx]][1], node_coords[route[start_idx]][0]
-            x1, y1 = node_coords[route[start_idx + 1]][1], node_coords[route[start_idx + 1]][0]
+            i = route[start_idx]
+            j = route[start_idx + 1]
+            x0, y0 = node_coords[i][1], node_coords[i][0]
+            x1, y1 = node_coords[j][1], node_coords[j][0]
+            rad = edge_curvature_by_truck.get(((i, j), k), 0.09)
             ax.annotate(
                 "",
                 xy=(x1, y1),
                 xytext=(x0, y0),
-                arrowprops=dict(arrowstyle="->", color=color, lw=1.5, shrinkA=6, shrinkB=6),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color=color,
+                    lw=1.8,
+                    shrinkA=6,
+                    shrinkB=6,
+                    connectionstyle=f"arc3,rad={rad}",
+                    alpha=0.9,
+                ),
             )
 
     ax.set_title("Truck Routes (FFs/GHs)")
@@ -923,7 +958,7 @@ else:
         trucks=K_trucks,
         travel_time=T,
         tau_vals={i: val(tau[i]) for i in All_Nodes},
-        proc_times=P,
+        proc_times= P,
         nodes_p=Nodes_P,
         ff_nodes=FFs,
         a_f_vals={(k, f): val(a_F[k, f]) for k in K_trucks for f in FFs.keys()},
