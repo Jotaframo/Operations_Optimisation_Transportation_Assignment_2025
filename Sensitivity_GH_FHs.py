@@ -101,6 +101,30 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
 
+    edge_to_trucks = {}
+    for k, route in routes.items():
+        if len(route) < 2:
+            continue
+        for start_idx in range(len(route) - 1):
+            edge = (route[start_idx], route[start_idx + 1])
+            if edge not in edge_to_trucks:
+                edge_to_trucks[edge] = set()
+            edge_to_trucks[edge].add(k)
+
+    edge_curvature_by_truck = {}
+    for edge, trucks_on_edge in edge_to_trucks.items():
+        truck_order = sorted(trucks_on_edge)
+        n_trucks = len(truck_order)
+        base_rad = 0.09
+        if n_trucks == 1:
+            edge_curvature_by_truck[(edge, truck_order[0])] = base_rad
+            continue
+        spread = 0.04
+        center = (n_trucks - 1) / 2.0
+        for pos, truck_id in enumerate(truck_order):
+            rad = base_rad + (pos - center) * spread
+            edge_curvature_by_truck[(edge, truck_id)] = max(-0.6, min(0.6, rad))
+
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
         if len(route) < 2:
@@ -111,16 +135,27 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         )
         xs = [node_coords[i][1] for i in route]
         ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.5) # Travelled Paths
+        ax.plot([], [], color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.8)
         ax.scatter(xs, ys, color=color, s=30)
         for start_idx in range(len(route) - 1):
-            x0, y0 = node_coords[route[start_idx]][1], node_coords[route[start_idx]][0]
-            x1, y1 = node_coords[route[start_idx + 1]][1], node_coords[route[start_idx + 1]][0]
+            i = route[start_idx]
+            j = route[start_idx + 1]
+            x0, y0 = node_coords[i][1], node_coords[i][0]
+            x1, y1 = node_coords[j][1], node_coords[j][0]
+            rad = edge_curvature_by_truck.get(((i, j), k), 0.09)
             ax.annotate(
                 "",
                 xy=(x1, y1),
                 xytext=(x0, y0),
-                arrowprops=dict(arrowstyle="->", color=color, lw=1.5, shrinkA=6, shrinkB=6),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color=color,
+                    lw=1.8,
+                    shrinkA=6,
+                    shrinkB=6,
+                    connectionstyle=f"arc3,rad={rad}",
+                    alpha=0.9,
+                ),
             )
 
     ax.set_title("Truck Routes (FFs/GHs)")
@@ -401,11 +436,17 @@ locs_4 = {
     'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))  
 }
 
-
-
-
+LOCS_SETS = {
+    "locs_1": locs_1,
+    "locs_2": locs_2,
+    "locs_3": locs_3,
+    "locs_4": locs_4,
+}
+ENABLE_PLOTS = os.getenv("ENABLE_PLOTS", "1") == "1"
+selected_locs_name = "locs_3"
 # SELECT YOU LOCATION SET HERE
-locs = locs_2
+locs = LOCS_SETS[selected_locs_name]
+
 
 def _facility_sort_key(name: str): #gets the number identifier for each GH and FF
     digits = "".join(ch for ch in name if ch.isdigit())
@@ -988,12 +1029,41 @@ else:
 
     # 7) Capacity usage (sum of pickups served per truck)
     print("Capacity usage per truck (weight and length):")
+    csv_rows = []
     for k in K_trucks:
         weight = 0.0; length = 0.0
         for i in Nodes_P:
             if any(val(x[j,i,k]) > 0.5 for j in All_Nodes if (j,i) in Edges):
                 weight += W[i]; length += L[i]
         print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
+        csv_rows.append({
+            "location_set": selected_locs_name,
+            "objective_value": float(m.objVal),
+            "obj_travel_time": float(travel_val),
+            "obj_wait_gh_pre_dock": float(wait_gh_dock_val),
+            "obj_wait_gh_dock": float(wait_gh_service_val),
+            "obj_wait_ff_dock": float(wait_ff_val),
+            "truck": k,
+            "weight_occupied": weight,
+            "length_occupied": length,
+        })
+
+    csv_output_path = os.path.join(cwd, "sensitivity_locs_objective_weight_length.csv")
+    write_header = not os.path.exists(csv_output_path)
+    csv_columns = [
+        "location_set",
+        "objective_value",
+        "obj_travel_time",
+        "obj_wait_gh_pre_dock",
+        "obj_wait_gh_dock",
+        "obj_wait_ff_dock",
+        "truck",
+        "weight_occupied",
+        "length_occupied",
+    ]
+    pd.DataFrame(csv_rows, columns=csv_columns).to_csv(csv_output_path, mode="a", header=write_header, index=False)
+    print(f"CSV results appended to: {csv_output_path}")
+
     print("==================================\n")
     print("\n Solver diagnostics:")
     visited_nodes = [i for i in Nodes_P + Nodes_D if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)]
@@ -1008,36 +1078,37 @@ else:
     print(f"  BestObj={m.objVal:.4f}, BestBound={m.ObjBound:.4f}, Gap={100.0*m.MIPGap:.2f}%")
     print(f"  Trucks used: {len(used_trucks)}/{len(K_trucks)}")
 
-    plot_routes(routes, node_loc_maps, FFs, GHs)
-    plot_truck_timeline_gantt(
-        routes=routes,
-        trucks=K_trucks,
-        travel_time=T,
-        tau_vals={i: val(tau[i]) for i in All_Nodes},
-        proc_times=P,
-        nodes_p=Nodes_P,
-        ff_nodes=FFs,
-        a_f_vals={(k, f): val(a_F[k, f]) for k in K_trucks for f in FFs.keys()},
-        d_f_vals={(k, f): val(d_F[k, f]) for k in K_trucks for f in FFs.keys()},
-        w_f_vals={(k, f): val(w_F[k, f]) for k in K_trucks for f in FFs.keys()},
-        gh_nodes=GHs,
-        a_g_vals={(k, g): val(a_G[k, g]) for k in K_trucks for g in GHs.keys()},
-        d_g_vals={(k, g): val(d_G[k, g]) for k in K_trucks for g in GHs.keys()},
-        w_d_vals={(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
-        w_g_vals={(k, g): val(w_G[k, g]) for k in K_trucks for g in GHs.keys()},
-        tau_end_vals={k: val(tau_end[k]) for k in K_trucks},
-    )
-    
-    served_pickups = [
-        i for i in Nodes_P
-        if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)
-    ]
+    if ENABLE_PLOTS:
+        plot_routes(routes, node_loc_maps, FFs, GHs)
+        plot_truck_timeline_gantt(
+            routes=routes,
+            trucks=K_trucks,
+            travel_time=T,
+            tau_vals={i: val(tau[i]) for i in All_Nodes},
+            proc_times=P,
+            nodes_p=Nodes_P,
+            ff_nodes=FFs,
+            a_f_vals={(k, f): val(a_F[k, f]) for k in K_trucks for f in FFs.keys()},
+            d_f_vals={(k, f): val(d_F[k, f]) for k in K_trucks for f in FFs.keys()},
+            w_f_vals={(k, f): val(w_F[k, f]) for k in K_trucks for f in FFs.keys()},
+            gh_nodes=GHs,
+            a_g_vals={(k, g): val(a_G[k, g]) for k in K_trucks for g in GHs.keys()},
+            d_g_vals={(k, g): val(d_G[k, g]) for k in K_trucks for g in GHs.keys()},
+            w_d_vals={(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
+            w_g_vals={(k, g): val(w_G[k, g]) for k in K_trucks for g in GHs.keys()},
+            tau_end_vals={k: val(tau_end[k]) for k in K_trucks},
+        )
+        
+        served_pickups = [
+            i for i in Nodes_P
+            if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)
+        ]
 
-    plot_ff_gh_flow_matrix(
-        served_pickups=served_pickups,
-        n_pickups=n_uld,
-        ff_nodes=FFs,
-        gh_nodes=GHs,
-    )
+        plot_ff_gh_flow_matrix(
+            served_pickups=served_pickups,
+            n_pickups=n_uld,
+            ff_nodes=FFs,
+            gh_nodes=GHs,
+        )
     
 
