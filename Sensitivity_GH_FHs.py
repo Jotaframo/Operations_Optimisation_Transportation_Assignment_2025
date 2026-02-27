@@ -142,10 +142,15 @@ def plot_truck_timeline_gantt(
     tau_vals: Dict[int, float],
     proc_times: Dict[int, float],
     nodes_p: List[int],
+    ff_nodes: Dict[int, List[int]],
+    a_f_vals: Dict,
+    d_f_vals: Dict,
+    w_f_vals: Dict,
     gh_nodes: Dict[int, List[int]],
     a_g_vals: Dict,
     d_g_vals: Dict,
     w_d_vals: Dict,
+    w_g_vals: Dict,
     tau_end_vals: Dict[int, float],
     output_path: str = "truck_timeline.png",
 ):
@@ -155,15 +160,19 @@ def plot_truck_timeline_gantt(
     phase_colors = {
         "travel": "#1f77b4",
         "ff_service": "#2ca02c",
+        "ff_wait": "#17becf",
         "gh_queue": "#ff7f0e",
-        "gh_dock": "#9467bd",
+        "gh_wait": "#bcbd22",
+        "gh_service": "#9467bd",
         "return": "#7f7f7f",
     }
     phase_labels = {
         "travel": "Travel",
         "ff_service": "Service at FF",
+        "ff_wait": "Waiting at FF",
         "gh_queue": "Queue at GH",
-        "gh_dock": "Dock service at GH",
+        "gh_wait": "Waiting at GH dock",
+        "gh_service": "Service at GH dock",
         "return": "Return",
     }
 
@@ -204,15 +213,26 @@ def plot_truck_timeline_gantt(
                 if node in nodes_p:
                     add_phase_bar(row, tau_vals.get(node, 0.0), proc_times.get(node, 0.0), "ff_service")
 
+        for f in ff_nodes.keys():
+            arr_f = a_f_vals.get((k, f), 0.0)
+            dep_f = d_f_vals.get((k, f), 0.0)
+            ff_wait = max(0.0, w_f_vals.get((k, f), 0.0))
+            if dep_f > arr_f + eps and ff_wait > eps:
+                ff_wait_start = max(arr_f, dep_f - ff_wait)
+                add_phase_bar(row, ff_wait_start, min(ff_wait, dep_f - ff_wait_start), "ff_wait")
+
         for g in gh_nodes.keys():
             arr = a_g_vals.get((k, g), 0.0)
             dep = d_g_vals.get((k, g), 0.0)
             queue = max(0.0, w_d_vals.get((k, g), 0.0))
             dock_start = arr + queue
             dock_duration = max(0.0, dep - dock_start)
+            gh_wait = min(max(0.0, w_g_vals.get((k, g), 0.0)), dock_duration)
+            gh_service = max(0.0, dock_duration - gh_wait)
 
             add_phase_bar(row, arr, queue, "gh_queue")
-            add_phase_bar(row, dock_start, dock_duration, "gh_dock")
+            add_phase_bar(row, dock_start, gh_wait, "gh_wait")
+            add_phase_bar(row, dock_start + gh_wait, gh_service, "gh_service")
 
     max_end = max([tau_end_vals.get(k, 0.0) for k in trucks] + [1.0])
     ax.set_xlim(0, max_end * 1.05)
@@ -226,6 +246,7 @@ def plot_truck_timeline_gantt(
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Truck timeline Gantt saved to: {output_path}")
+    plt.show()
 
 def plot_ff_gh_flow_matrix(
     served_pickups: List[int],
@@ -336,7 +357,7 @@ L = {0: 0} # Lengths
 # }
 
 # Locations
-locs_11 = {
+locs_0 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
@@ -344,9 +365,32 @@ locs_11 = {
 }
 
 
-print(locs_11)
+
+locs_1 = {
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+}
+
 
 locs_2 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)) 
+}
+
+
+
+locs_3 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'FF3': (dms_to_dd(52,15,0.9108), dms_to_dd(4,46,9.0422)),
+    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+    'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302))
+}
+
+locs_4 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
     'FF3': (dms_to_dd(52,15,0.9108), dms_to_dd(4,46,9.0422)),
@@ -356,25 +400,6 @@ locs_2 = {
     'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302)),
     'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))  
 }
-
-locs_3 = {
-    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
-    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
-    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)) 
-}
-
-locs_4 = {
-    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
-    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
-    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
-}
-
-locs_4 = {
-    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
-    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
-    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
-}
-
 
 
 
@@ -991,10 +1016,15 @@ else:
         tau_vals={i: val(tau[i]) for i in All_Nodes},
         proc_times=P,
         nodes_p=Nodes_P,
+        ff_nodes=FFs,
+        a_f_vals={(k, f): val(a_F[k, f]) for k in K_trucks for f in FFs.keys()},
+        d_f_vals={(k, f): val(d_F[k, f]) for k in K_trucks for f in FFs.keys()},
+        w_f_vals={(k, f): val(w_F[k, f]) for k in K_trucks for f in FFs.keys()},
         gh_nodes=GHs,
         a_g_vals={(k, g): val(a_G[k, g]) for k in K_trucks for g in GHs.keys()},
         d_g_vals={(k, g): val(d_G[k, g]) for k in K_trucks for g in GHs.keys()},
         w_d_vals={(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
+        w_g_vals={(k, g): val(w_G[k, g]) for k in K_trucks for g in GHs.keys()},
         tau_end_vals={k: val(tau_end[k]) for k in K_trucks},
     )
     
