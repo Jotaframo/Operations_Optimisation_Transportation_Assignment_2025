@@ -91,30 +91,15 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
 
-    edge_to_trucks = {}
-    for k, route in routes.items():
-        for edge in zip(route, route[1:]):
-            edge_to_trucks.setdefault(edge, set()).add(k)
-
-    base_rad = 0.09
-    truck_spread = 0.015
-    edge_spread = 0.04
-    max_rad = 0.6
-
-    truck_ids_sorted = sorted(routes)
-    truck_center = (len(truck_ids_sorted) - 1) / 2.0
-    truck_bias = {
-        truck_id: (idx - truck_center) * truck_spread
-        for idx, truck_id in enumerate(truck_ids_sorted)
+    used_truck_ids = sorted(k for k, route in routes.items() if len(route) >= 2)
+    min_rad, max_rad = 0.07, 0.13
+    precision = 10000
+    rad_pool = list(range(int(min_rad * precision), int(max_rad * precision) + 1))
+    picked_rads = random.sample(rad_pool, len(used_truck_ids))
+    truck_curvature = {
+        truck_id: rad_int / precision
+        for truck_id, rad_int in zip(used_truck_ids, picked_rads)
     }
-
-    edge_curvature_by_truck = {}
-    for edge, trucks_on_edge in edge_to_trucks.items():
-        truck_order = sorted(trucks_on_edge)
-        center = (len(truck_order) - 1) / 2.0
-        for pos, truck_id in enumerate(truck_order):
-            rad = base_rad + truck_bias.get(truck_id, 0.0) + (pos - center) * edge_spread
-            edge_curvature_by_truck[(edge, truck_id)] = max(-max_rad, min(max_rad, rad))
 
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
@@ -133,7 +118,7 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         for i, j in segments:
             x0, y0 = _node_xy(i)
             x1, y1 = _node_xy(j)
-            rad = edge_curvature_by_truck.get(((i, j), k), 0.09)
+            rad = truck_curvature.get(k, 0.09)
             ax.annotate(
                 "",
                 xy=(x1, y1),
