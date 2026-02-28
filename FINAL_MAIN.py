@@ -52,7 +52,7 @@ def get_dist(coord1, coord2):
     r = 6371 # Radius of earth in kilometers
     return c * r
 
-# Plotting Functions
+# Plotting Routes and Facilities
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
     fig, ax = plt.subplots(figsize=(8, 6))
 
