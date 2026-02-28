@@ -7,6 +7,7 @@ import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
 from typing import Dict, List
+import matplotlib.pyplot as plt
 
 # Get path to current folder
 cwd = os.getcwd()
@@ -47,39 +48,91 @@ def get_dist(coord1, coord2):
 
 
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("Matplotlib is not installed. Run: pip install matplotlib")
-        return
-
     fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot depot
     depot = node_coords[0]
-    ax.scatter(depot[1], depot[0], c="black", s=120, marker="s", label="Depot")
-    for f, nodes in ff_nodes.items():
-        for i in nodes:
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=100, marker="o")
-    for g, nodes in gh_nodes.items():
-        for i in nodes:
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=100, marker="^")
-    ax.scatter([], [], c="#1f77b4", s=100, marker="o", label="FF")
-    ax.scatter([], [], c="#ff7f0e", s=100, marker="^", label="GH")
+    ax.scatter(depot[1], depot[0], c="black", s=80, marker="s", label="Depot")
+
+    def _node_xy(node_idx: int):
+        return node_coords[node_idx][1], node_coords[node_idx][0]
+
+    def _node_label_offset(node_idx: int, total_nodes: int, base_x: int = 10, base_y: int = 10):
+        if total_nodes <= 1:
+            return base_x, base_y
+        centered_rank = node_idx - (total_nodes - 1) / 2
+        return base_x, base_y + int(centered_rank * 12)
+
+    def _plot_facility_nodes(node_groups: Dict[int, List[int]], prefix: str, color: str, marker: str):
+        for group_id, nodes in node_groups.items():
+            total_nodes = len(nodes)
+            for node_idx, node in enumerate(nodes):
+                xy = _node_xy(node)
+                ax.scatter(xy[0], xy[1], c=color, s=150, marker=marker)
+                ax.annotate(
+                    f"N{node} ({prefix}{group_id})",
+                    xy=xy,
+                    xytext=_node_label_offset(node_idx, total_nodes),
+                    textcoords="offset points",
+                    fontsize=10,
+                    color=color,
+                    weight="bold",
+                )
+
+    _plot_facility_nodes(ff_nodes, "FF", "#1f77b4", "o")
+    _plot_facility_nodes(gh_nodes, "GH", "#ff7f0e", "^")
+
+    ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
+    ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
+
+    used_truck_ids = sorted(k for k, route in routes.items() if len(route) >= 2)
+    min_rad, max_rad = 0.07, 0.13
+    precision = 10000
+    rad_pool = list(range(int(min_rad * precision), int(max_rad * precision) + 1))
+    picked_rads = random.sample(rad_pool, len(used_truck_ids))
+    truck_curvature = {
+        truck_id: rad_int / precision
+        for truck_id, rad_int in zip(used_truck_ids, picked_rads)
+    }
+
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
-    linestyles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
-    for idx, (k, route) in enumerate(routes.items()):
-        if len(route) < 2:
+    for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
+        segments = list(zip(route, route[1:]))
+        if not segments:
             continue
         color = colors[idx % len(colors)]
-        style = linestyles[idx % len(linestyles)]
-        xs = [node_coords[i][1] for i in route]
-        ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linestyle=style, linewidth=2, label=f"Truck {k}")
+        route_distance_km = sum(
+            get_dist(node_coords[i], node_coords[j]) for i, j in segments
+        )
+        route_xy = [_node_xy(node) for node in route]
+        xs = [xy[0] for xy in route_xy]
+        ys = [xy[1] for xy in route_xy]
+        ax.plot([], [], color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.8)
         ax.scatter(xs, ys, color=color, s=30)
+        for i, j in segments:
+            x0, y0 = _node_xy(i)
+            x1, y1 = _node_xy(j)
+            rad = truck_curvature.get(k, 0.09)
+            ax.annotate(
+                "",
+                xy=(x1, y1),
+                xytext=(x0, y0),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color=color,
+                    lw=1.8,
+                    shrinkA=6,
+                    shrinkB=6,
+                    connectionstyle=f"arc3,rad={rad}",
+                    alpha=0.9,
+                ),
+            )
+
     ax.set_title("Truck Routes (FFs/GHs)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    ax.legend(loc="upper left")
-    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(loc="best")
+    ax.grid(True, linestyle="--", alpha=0.8)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
@@ -101,12 +154,22 @@ GHs = {
 Edges = []
 for i in All_Nodes:
     for j in All_Nodes:
-        if i == j:
+        if i == j: 
             continue
+        # 1) Forbid to go from depot to delivery: 0 -> D
         if i == 0 and j in Nodes_D:
             continue
+        # 2) Forbid returning to the depot from a pickup: P -> 0
         if i in Nodes_P and j == 0:
             continue
+        # 3) Forbid going to a delivery before its corresponding pickup
+        if j in Nodes_D:
+            pickup_node = j - n_uld
+            if pickup_node in Nodes_P:
+                # Don't allow edge to delivery unless pickup was already visited
+                # This requires checking if i is the pickup or comes after it
+                if i != pickup_node and i not in Nodes_D:
+                    continue
         Edges.append((i, j))
 
 locs = {
@@ -572,7 +635,6 @@ def main():
             'GH Pre-Dock Wait (min)': f"{row['wait_gh_dock']:.2f}",
             'GH Dock Wait (min)': f"{row['wait_gh_service']:.2f}",
             'FF Dock Wait (min)': f"{row['wait_ff']:.2f}",
-            'Avg Weight Usage (kg)': f"{avg_weight_usage:.1f}",
             'Weight Util (%)': f"{weight_util_pct:.1f}",
             'Max Service Time (min)': f"{max_tau:.2f}",
         })
@@ -584,6 +646,9 @@ def main():
     print('\ncaptruck SENSITIVITY REPORT:')
     print(df_report.to_string(index=False))
     print('\ncaptruck Finished sensitivity analysis')
+    # Call the function to generate and save the table
+
+
 
 
 if __name__ == '__main__':
