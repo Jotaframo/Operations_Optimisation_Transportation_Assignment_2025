@@ -54,6 +54,7 @@ def get_dist(coord1, coord2):
     r = 6371 # Radius of earth in kilometers
     return c * r
 
+# Plotting Routes and Facilities
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
     fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -61,88 +62,65 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     depot = node_coords[0]
     ax.scatter(depot[1], depot[0], c="black", s=80, marker="s", label="Depot")
 
-    # Plot FFs and GHs
-    def _node_label_offset(node_idx: int, total_nodes: int, base_x: int, base_y: int):
-        if total_nodes <= 1:
-            return (base_x, base_y)
-        spread = 12
-        centered_rank = node_idx - (total_nodes - 1) / 2
-        return (base_x, base_y + int(centered_rank * spread))
+    def _node_xy(node_idx: int):
+        return node_coords[node_idx][1], node_coords[node_idx][0]
 
-    for f, nodes in ff_nodes.items():
-        total_nodes = len(nodes)
-        for node_idx, i in enumerate(nodes):
-            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#1f77b4", s=150, marker="o")
-            ax.annotate(
-                f"N{i} (FF{f})",
-                xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=offset_xy,
-                textcoords="offset points",
-                fontsize=10,
-                color="#1f77b4",
-                weight="bold",
-            )
-    for g, nodes in gh_nodes.items():
-        total_nodes = len(nodes)
-        for node_idx, i in enumerate(nodes):
-            offset_xy = _node_label_offset(node_idx, total_nodes, 10, 10)
-            ax.scatter(node_coords[i][1], node_coords[i][0], c="#ff7f0e", s=150, marker="^")
-            ax.annotate(
-                f"N{i} (GH{g})",
-                xy=(node_coords[i][1], node_coords[i][0]),
-                xytext=offset_xy,
-                textcoords="offset points",
-                fontsize=10,
-                color="#ff7f0e",
-                weight="bold",
-            )
+    def _node_label_offset(node_idx: int, total_nodes: int, base_x: int = 10, base_y: int = 10):
+        if total_nodes <= 1:
+            return base_x, base_y
+        centered_rank = node_idx - (total_nodes - 1) / 2
+        return base_x, base_y + int(centered_rank * 12)
+
+    def _plot_facility_nodes(node_groups: Dict[int, List[int]], prefix: str, color: str, marker: str):
+        for group_id, nodes in node_groups.items():
+            total_nodes = len(nodes)
+            for node_idx, node in enumerate(nodes):
+                xy = _node_xy(node)
+                ax.scatter(xy[0], xy[1], c=color, s=150, marker=marker)
+                ax.annotate(
+                    f"N{node} ({prefix}{group_id})",
+                    xy=xy,
+                    xytext=_node_label_offset(node_idx, total_nodes),
+                    textcoords="offset points",
+                    fontsize=10,
+                    color=color,
+                    weight="bold",
+                )
+
+    _plot_facility_nodes(ff_nodes, "FF", "#1f77b4", "o")
+    _plot_facility_nodes(gh_nodes, "GH", "#ff7f0e", "^")
 
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
 
-    edge_to_trucks = {}
-    for k, route in routes.items():
-        if len(route) < 2:
-            continue
-        for start_idx in range(len(route) - 1):
-            edge = (route[start_idx], route[start_idx + 1])
-            if edge not in edge_to_trucks:
-                edge_to_trucks[edge] = set()
-            edge_to_trucks[edge].add(k)
-
-    edge_curvature_by_truck = {}
-    for edge, trucks_on_edge in edge_to_trucks.items():
-        truck_order = sorted(trucks_on_edge)
-        n_trucks = len(truck_order)
-        base_rad = 0.09
-        if n_trucks == 1:
-            edge_curvature_by_truck[(edge, truck_order[0])] = base_rad
-            continue
-        spread = 0.04
-        center = (n_trucks - 1) / 2.0
-        for pos, truck_id in enumerate(truck_order):
-            rad = base_rad + (pos - center) * spread
-            edge_curvature_by_truck[(edge, truck_id)] = max(-0.6, min(0.6, rad))
+    used_truck_ids = sorted(k for k, route in routes.items() if len(route) >= 2)
+    min_rad, max_rad = 0.07, 0.13
+    precision = 10000
+    rad_pool = list(range(int(min_rad * precision), int(max_rad * precision) + 1))
+    picked_rads = random.sample(rad_pool, len(used_truck_ids))
+    truck_curvature = {
+        truck_id: rad_int / precision
+        for truck_id, rad_int in zip(used_truck_ids, picked_rads)
+    }
 
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     for idx, (k, route) in enumerate(routes.items()): #Each Truck K follows a specific route 
-        if len(route) < 2:
+        segments = list(zip(route, route[1:]))
+        if not segments:
             continue
         color = colors[idx % len(colors)]
         route_distance_km = sum(
-            get_dist(node_coords[route[pos]], node_coords[route[pos + 1]]) for pos in range(len(route) - 1)
+            get_dist(node_coords[i], node_coords[j]) for i, j in segments
         )
-        xs = [node_coords[i][1] for i in route]
-        ys = [node_coords[i][0] for i in route]
+        route_xy = [_node_xy(node) for node in route]
+        xs = [xy[0] for xy in route_xy]
+        ys = [xy[1] for xy in route_xy]
         ax.plot([], [], color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.8)
         ax.scatter(xs, ys, color=color, s=30)
-        for start_idx in range(len(route) - 1):
-            i = route[start_idx]
-            j = route[start_idx + 1]
-            x0, y0 = node_coords[i][1], node_coords[i][0]
-            x1, y1 = node_coords[j][1], node_coords[j][0]
-            rad = edge_curvature_by_truck.get(((i, j), k), 0.09)
+        for i, j in segments:
+            x0, y0 = _node_xy(i)
+            x1, y1 = _node_xy(j)
+            rad = truck_curvature.get(k, 0.09)
             ax.annotate(
                 "",
                 xy=(x1, y1),
@@ -442,9 +420,10 @@ LOCS_SETS = {
     "locs_3": locs_3,
     "locs_4": locs_4,
 }
-ENABLE_PLOTS = os.getenv("ENABLE_PLOTS", "1") == "1"
-selected_locs_name = "locs_3"
+
+ENABLE_PLOTS = "1"
 # SELECT YOU LOCATION SET HERE
+selected_locs_name = "locs_4" 
 locs = LOCS_SETS[selected_locs_name]
 
 
