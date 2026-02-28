@@ -850,9 +850,22 @@ else:
         travel_time_by_truck[k] = route_travel
         distance_by_truck[k] = route_travel * Speed_mpm
         first_departure = val(tau[0]) if any(i == 0 for (i, _) in used_arcs) else float('nan')
+        visited_service_nodes = {j for (_, j) in used_arcs if j != 0}
+        service_end_time = (
+            max(val(tau[i]) + P[i] for i in visited_service_nodes)
+            if visited_service_nodes else float('nan')
+        )
+        service_span = (
+            max(0.0, service_end_time - first_departure)
+            if visited_service_nodes and first_departure == first_departure else float('nan')
+        )
         end_time = val(tau_end[k])
         active_time = max(0.0, end_time - (val(tau[0]) if used_flag else 0.0))
-        print(f"  Truck {k}: used={used_flag}, arcs={len(used_arcs)}, travel={route_travel:.2f}, start={first_departure:.2f}, end={end_time:.2f}, active={active_time:.2f}")
+        print(
+            f"  Truck {k}: used={used_flag}, arcs={len(used_arcs)}, travel={route_travel:.2f}, "
+            f"start={first_departure:.2f}, service_end={service_end_time:.2f}, service_total={service_span:.2f}, "
+            f"end={end_time:.2f}, active={active_time:.2f}"
+        )
 
     # 3) Node times (tau) and windows
     print("\n Tau per node with specified time windows:")
