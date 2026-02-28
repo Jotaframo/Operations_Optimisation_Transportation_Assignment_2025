@@ -53,7 +53,7 @@ def get_dist(coord1, coord2):
     return c * r
 
 # Plotting Routes and Facilities
-def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
+def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.pdf"):
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot depot
@@ -142,6 +142,7 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Route plot saved to: {output_path}")
+    plt.show()
 
 
 def plot_truck_timeline_gantt(
@@ -161,7 +162,7 @@ def plot_truck_timeline_gantt(
     w_d_vals: Dict,
     w_g_vals: Dict,
     tau_end_vals: Dict[int, float],
-    output_path: str = "truck_timeline.png",
+    output_path: str = "truck_timeline.pdf",
 ):
     fig_height = max(4, 1.2 * len(trucks) + 2)
     fig, ax = plt.subplots(figsize=(14, fig_height))
@@ -255,6 +256,7 @@ def plot_truck_timeline_gantt(
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     print(f"Truck timeline Gantt saved to: {output_path}")
+    plt.show()
 
 def plot_ff_gh_flow_matrix(
     served_pickups: List[int],
