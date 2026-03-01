@@ -423,18 +423,21 @@ locs_4 = {
     'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))  
 }
 
+
 LOCS_SETS = {
+    "locs_0": locs_0,
     "locs_1": locs_1,
     "locs_2": locs_2,
     "locs_3": locs_3,
     "locs_3_5": locs_3_5,
-    "locs_4": locs_4,
+    "locs_4": locs_4
 }
 
 ENABLE_PLOTS = "1"
-# SELECT YOU LOCATION SET HERE
-selected_locs_name = "locs_1" 
-locs = LOCS_SETS[selected_locs_name]
+# SELECT YOU LOCATION SET HERE #
+locs_selected="locs_4"
+locs = LOCS_SETS[locs_selected]
+
 
 
 def _facility_sort_key(name: str): #gets the number identifier for each GH and FF
@@ -452,7 +455,8 @@ gh_location_keys = gh_location_keys[:min(len(gh_location_keys), len(Nodes_D))]
 pickup_assignment_nodes = Nodes_P.copy()
 delivery_assignment_nodes = Nodes_D.copy()
 
-if selected_locs_name == "locs_3_5": #This is a special case where the nodes are distributed in a non consecutive order, such that trucks are forced to visit multiple GHs and FFs
+if locs_selected == "locs_3_5": #This is a special case where the nodes are distributed in a non consecutive order, such that trucks are forced to visit multiple GHs and FFs
+    random.seed(42)
     random.shuffle(pickup_assignment_nodes)
     random.shuffle(delivery_assignment_nodes)
 
@@ -1016,7 +1020,7 @@ else:
                 weight += W[i]; length += L[i]
         print(f"  k={k}: Weight={weight}/{Cap_W}  Length={length}/{Cap_L}")
         csv_rows.append({
-            "location_set": selected_locs_name,
+            "location_set": locs,
             "objective_value": float(m.objVal),
             "obj_travel_time": float(travel_val),
             "obj_wait_gh_pre_dock": float(wait_gh_dock_val),
