@@ -4,7 +4,7 @@
 import numpy as np
 import os
 import pandas as pd
-from gurobipy import Model,GRB,LinExpr
+from gurobipy import GRB
 import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
@@ -14,18 +14,14 @@ import matplotlib.pyplot as plt
 
 # Get path to current folder
 cwd = os.getcwd()
-
-# Get all instances
-full_list           = os.listdir(cwd)
-model=Model()
 M=10000 # Big M for time constraints (should be larger than Horizon + max processing time)
 
 
 
 ### DATA INPUT & PARAMETER DEFINITIONS ###
 
-tighter_windows_instance=0 # proportion of nodes with tightened time windows (0.2 = 20% of nodes have tighter windows)
-Delta_GH = 1 # number of docks per GH (Assuming 'Very Large' instance setting or standard)
+tighter_windows_instance=0 # proportion of nodes with tightened time windows
+Delta_GH = 1 # number of docks per GH 
 Docks = list(range(1, Delta_GH + 1)) # Set of Docks
 n_uld = 6 # number of ULDs (Pickups = 1..n_uld, Deliveries = n_uld+1..2*n_uld)
 K_trucks = [1, 2, 3] #truck instances
@@ -53,6 +49,31 @@ def get_dist(coord1, coord2):
     c = 2 * asin(sqrt(a)) 
     r = 6371 # Radius of earth in kilometers
     return c * r
+
+
+def get_used_arcs_for_truck(k: int, edges: List[tuple], x_vars, val_func) -> List[tuple]:
+    return [(i, j) for (i, j) in edges if val_func(x_vars[i, j, k]) > 0.5]
+
+
+def build_route_from_successors(successors: Dict[int, int], start_node: int, max_steps: int) -> List[int]:
+    route = [start_node]
+    cur = start_node
+    visited = {start_node}
+    for _ in range(max_steps):
+        nxt = successors.get(cur)
+        if nxt is None:
+            break
+        route.append(nxt)
+        if nxt in visited:
+            break
+        visited.add(nxt)
+        cur = nxt
+    return route
+
+
+def route_visits_facility(route: List[int], facility_nodes: List[int]) -> bool:
+    facility_node_set = set(facility_nodes)
+    return any(node in facility_node_set for node in route)
 
 # Plotting Routes and Facilities
 def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff_nodes: Dict[int, List[int]], gh_nodes: Dict[int, List[int]], output_path: str = "truck_routes.png"):
@@ -167,6 +188,7 @@ def plot_truck_timeline_gantt(
     tau_end_vals: Dict[int, float],
     output_path: str = "truck_timeline.png",
 ):
+    # Build one horizontal lane per truck.
     fig_height = max(4, 1.2 * len(trucks) + 2)
     fig, ax = plt.subplots(figsize=(14, fig_height))
 
@@ -193,8 +215,10 @@ def plot_truck_timeline_gantt(
     eps = 1e-6
 
     def add_phase_bar(y_pos, start, duration, phase):
+        # Draw a phase segment only if it has positive duration.
         if duration <= eps:
             return
+        # Add each legend label once.
         label = phase_labels[phase] if phase not in used_labels else None
         if label is not None:
             used_labels.add(phase)
@@ -214,6 +238,7 @@ def plot_truck_timeline_gantt(
         route = routes.get(k, [])
 
         if len(route) >= 2:
+            # 1) Plot movement along route arcs (travel/return).
             for pos in range(len(route) - 1):
                 i = route[pos]
                 j = route[pos + 1]
@@ -222,19 +247,61 @@ def plot_truck_timeline_gantt(
                 phase = "return" if j == 0 else "travel"
                 add_phase_bar(row, travel_start, travel_duration, phase)
 
+            # 2) Plot pickup-node service blocks at FFs.
             for node in route:
                 if node in nodes_p:
                     add_phase_bar(row, tau_vals.get(node, 0.0), proc_times.get(node, 0.0), "ff_service")
 
         for f in ff_nodes.keys():
+            # Consider FF waiting only for trucks that visit this FF.
+            ff_route_nodes = [node for node in route if node in ff_nodes[f]]
+            if not ff_route_nodes:
+                continue
+
             arr_f = a_f_vals.get((k, f), 0.0)
             dep_f = d_f_vals.get((k, f), 0.0)
-            ff_wait = max(0.0, w_f_vals.get((k, f), 0.0))
-            if dep_f > arr_f + eps and ff_wait > eps:
-                ff_wait_start = max(arr_f, dep_f - ff_wait)
-                add_phase_bar(row, ff_wait_start, min(ff_wait, dep_f - ff_wait_start), "ff_wait")
+            # Skip invalid stay windows.
+            if dep_f <= arr_f + eps:
+                continue
+
+            # Service intervals at this FF (start, end), sorted in time.
+            service_intervals = sorted(
+                (tau_vals.get(node, 0.0), tau_vals.get(node, 0.0) + proc_times.get(node, 0.0))
+                for node in ff_route_nodes
+            )
+
+            # Exact waiting budget from optimization variable w_F[k,f].
+            ff_wait_budget = max(0.0, w_f_vals.get((k, f), 0.0))
+            if ff_wait_budget <= eps:
+                continue
+
+            # Allocate waiting across idle gaps before/between service intervals.
+            cursor = arr_f
+            for start_s, end_s in service_intervals:
+                if ff_wait_budget <= eps:
+                    break
+                wait_start = max(cursor, arr_f)
+                wait_end = min(start_s, dep_f)
+                if wait_end > wait_start + eps:
+                    gap = wait_end - wait_start
+                    draw_wait = min(gap, ff_wait_budget)
+                    add_phase_bar(row, wait_start, draw_wait, "ff_wait")
+                    ff_wait_budget -= draw_wait
+                cursor = max(cursor, end_s)
+
+            # Allocate remaining waiting after last service, up to departure.
+            if ff_wait_budget > eps and dep_f > cursor + eps:
+                tail_capacity = dep_f - cursor
+                tail_wait = min(tail_capacity, ff_wait_budget)
+                add_phase_bar(row, cursor, tail_wait, "ff_wait")
+                ff_wait_budget -= tail_wait
+
+            # Safety fallback: if still remaining, append right after departure.
+            if ff_wait_budget > eps:
+                add_phase_bar(row, dep_f, ff_wait_budget, "ff_wait")
 
         for g in gh_nodes.keys():
+            # GH timeline split: queue before dock, dock waiting, then dock service.
             arr = a_g_vals.get((k, g), 0.0)
             dep = d_g_vals.get((k, g), 0.0)
             queue = max(0.0, w_d_vals.get((k, g), 0.0))
@@ -247,6 +314,7 @@ def plot_truck_timeline_gantt(
             add_phase_bar(row, dock_start, gh_wait, "gh_wait")
             add_phase_bar(row, dock_start + gh_wait, gh_service, "gh_service")
 
+            # Final chart formatting and export.
     max_end = max([tau_end_vals.get(k, 0.0) for k in trucks] + [1.0])
     ax.set_xlim(0, max_end * 1.05)
     ax.set_ylim(-0.8, len(trucks) - 0.2)
@@ -261,60 +329,6 @@ def plot_truck_timeline_gantt(
     print(f"Truck timeline Gantt saved to: {output_path}")
     plt.show()
 
-def plot_ff_gh_flow_matrix(
-    served_pickups: List[int],
-    n_pickups: int,
-    ff_nodes: Dict[int, List[int]],
-    gh_nodes: Dict[int, List[int]],
-    output_path: str = "ff_gh_flow_matrix.png",
-):
-    ff_ids = sorted(ff_nodes.keys())
-    gh_ids = sorted(gh_nodes.keys())
-
-    pickup_to_ff = {}
-    for f, nodes in ff_nodes.items():
-        for node in nodes:
-            pickup_to_ff[node] = f
-
-    delivery_to_gh = {}
-    for g, nodes in gh_nodes.items():
-        for node in nodes:
-            delivery_to_gh[node] = g
-
-    ff_pos = {f: idx for idx, f in enumerate(ff_ids)}
-    gh_pos = {g: idx for idx, g in enumerate(gh_ids)}
-    flow_matrix = np.zeros((len(ff_ids), len(gh_ids)), dtype=int)
-
-    for pickup_node in served_pickups:
-        ff_id = pickup_to_ff.get(pickup_node)
-        delivery_node = pickup_node + n_pickups
-        gh_id = delivery_to_gh.get(delivery_node)
-        if ff_id is None or gh_id is None:
-            continue
-        flow_matrix[ff_pos[ff_id], gh_pos[gh_id]] += 1
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    im = ax.imshow(flow_matrix, cmap="Blues", aspect="auto")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Number of ULDs")
-
-    ax.set_xticks(np.arange(len(gh_ids)))
-    ax.set_yticks(np.arange(len(ff_ids)))
-    ax.set_xticklabels([f"GH{g}" for g in gh_ids])
-    ax.set_yticklabels([f"FF{f}" for f in ff_ids])
-    ax.set_xlabel("Ground Handler (GH)")
-    ax.set_ylabel("Freight Forwarder (FF)")
-    ax.set_title("FF to GH Flow Matrix (ULD Count)")
-
-    for i in range(flow_matrix.shape[0]):
-        for j in range(flow_matrix.shape[1]):
-            val_ij = flow_matrix[i, j]
-            txt_color = "white" if val_ij > flow_matrix.max() / 2 and flow_matrix.max() > 0 else "black"
-            ax.text(j, i, f"{val_ij}", ha="center", va="center", color=txt_color, fontsize=11)
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
-    print(f"FF-to-GH flow matrix saved to: {output_path}")
 
 #NODE MAPPING
 Nodes_P = list(range(1, n_uld+1)) # Pickup nodes (1 to n_uld)
@@ -355,20 +369,6 @@ D_win = {0: Horizon} # Latest Time
 W = {0: 0} # Weights
 L = {0: 0} # Lengths
 
-
-
-# ALL_LOCS = {
-#     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
-#     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
-#     'FF3': (dms_to_dd(52,17,0.9108), dms_to_dd(4,46,9.0422)),
-#     'FF4': (dms_to_dd(52,16,29.579), dms_to_dd(4,44,28.912)),
-#     'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
-#     'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
-#     'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302)),
-#     'GH4': (dms_to_dd(52,17,50.289), dms_to_dd(4,44,46.132))
-    
-# }
-
 # Locations
 locs_0 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
@@ -403,6 +403,15 @@ locs_3 = {
     'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302))
 }
 
+locs_3_5 = {
+    'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
+    'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
+    'FF3': (dms_to_dd(52,15,0.9108), dms_to_dd(4,46,9.0422)),
+    'GH1': (dms_to_dd(52,17,0.8),  dms_to_dd(4,46,7.1)),
+    'GH2': (dms_to_dd(52,16,32.9), dms_to_dd(4,44,30.0)),
+    'GH3': (dms_to_dd(52,17,42.297), dms_to_dd(4,45,57.302))
+}
+
 locs_4 = {
     'FF1': (dms_to_dd(52,17,46.8), dms_to_dd(4,46,10.4)),
     'FF2': (dms_to_dd(52,18,6.8),  dms_to_dd(4,45,3.2)),
@@ -418,12 +427,13 @@ LOCS_SETS = {
     "locs_1": locs_1,
     "locs_2": locs_2,
     "locs_3": locs_3,
+    "locs_3_5": locs_3_5,
     "locs_4": locs_4,
 }
 
 ENABLE_PLOTS = "1"
 # SELECT YOU LOCATION SET HERE
-selected_locs_name = "locs_4" 
+selected_locs_name = "locs_1" 
 locs = LOCS_SETS[selected_locs_name]
 
 
@@ -435,20 +445,24 @@ def _facility_sort_key(name: str): #gets the number identifier for each GH and F
 ff_location_keys = sorted([key for key in locs.keys() if key.upper().startswith("FF")], key=_facility_sort_key)
 gh_location_keys = sorted([key for key in locs.keys() if key.upper().startswith("GH")], key=_facility_sort_key)
 
-if len(ff_location_keys) == 0 or len(gh_location_keys) == 0:
-    raise ValueError("The selected `locs` must include at least one FF* and one GH* key.")
-
 # Use at most one pickup/delivery node per facility to avoid empty groups
 ff_location_keys = ff_location_keys[:min(len(ff_location_keys), len(Nodes_P))]
 gh_location_keys = gh_location_keys[:min(len(gh_location_keys), len(Nodes_D))]
 
+pickup_assignment_nodes = Nodes_P.copy()
+delivery_assignment_nodes = Nodes_D.copy()
+
+if selected_locs_name == "locs_3_5": #This is a special case where the nodes are distributed in a non consecutive order, such that trucks are forced to visit multiple GHs and FFs
+    random.shuffle(pickup_assignment_nodes)
+    random.shuffle(delivery_assignment_nodes)
+
 FFs = {
     idx + 1: list(group)
-    for idx, group in enumerate(np.array_split(Nodes_P, len(ff_location_keys)))
+    for idx, group in enumerate(np.array_split(pickup_assignment_nodes, len(ff_location_keys)))
 }
 GHs = {
     idx + 1: list(group)
-    for idx, group in enumerate(np.array_split(Nodes_D, len(gh_location_keys)))
+    for idx, group in enumerate(np.array_split(delivery_assignment_nodes, len(gh_location_keys)))
 }
 
 ff_key_by_id = {idx + 1: loc_key for idx, loc_key in enumerate(ff_location_keys)}
@@ -478,11 +492,8 @@ for i in Nodes_D:
 # Fill Parameters
 for i in  All_Nodes:
     # Processing Time
-    if i != 0: P[i] = Proc_Time
-    
-for i in  All_Nodes:
-    # Processing Time
-    if i != 0: P[i] = Proc_Time
+    if i != 0:
+        P[i] = Proc_Time
     
     # Weights & Lengths (Only for Pickups, 0 for deliveries to avoid double counting in cap constraints)
     if i in Nodes_P:
@@ -907,31 +918,23 @@ else:
             dist = get_dist(locs[ff_key_by_id[f]], locs[gh_key_by_id[g]])
             print(f"  FF{f} -> GH{g}: {dist:.2f} [km]")
 
+    used_arcs_by_truck = {
+        k: get_used_arcs_for_truck(k, Edges, x, val)
+        for k in K_trucks
+    }
+
     # 1) Used paths x=1 (per truck)
     print("\n Paths used x[i,j,k]=1:")
     for k in K_trucks:
-        used = [(i,j) for (i,j) in Edges if val(x[i,j,k]) > 0.5]
-        print(f"  Truck {k}: {used}")
+        print(f"  Truck {k}: {used_arcs_by_truck[k]}")
 
     # 2) Simple route per truck (from depot following successors)
     print("\n Route Followed (from depot 0):")
     routes = {}
     for k in K_trucks:
-        succ = {i:j for (i,j) in Edges if val(x[i,j,k]) > 0.5}
-        route = [0]
-        cur = 0
-        visited = set([0])
-        # avoids infinite loops in pathological cases
-        for _ in range(len(All_Nodes)+2):
-            if cur in succ:
-                nxt = succ[cur]
-                route.append(nxt)
-                if nxt in visited: break
-                visited.add(nxt)
-                cur = nxt
-            else:
-                break
-            routes[k] = route
+        successors = {i: j for (i, j) in used_arcs_by_truck[k]}
+        route = build_route_from_successors(successors, start_node=0, max_steps=len(All_Nodes) + 2)
+        routes[k] = route
         print(f"  Truck {k}: {' -> '.join(map(str, route))}")
     
     print("\n Truck utilization and route:")
@@ -939,7 +942,7 @@ else:
     travel_time_by_truck = {}
     distance_by_truck = {}
     for k in K_trucks:
-        used_arcs = [(i, j) for (i, j) in Edges if val(x[i, j, k]) > 0.5]
+        used_arcs = used_arcs_by_truck[k]
         used_flag = 1 if used_arcs else 0
         if used_flag:
             used_trucks.append(k)
@@ -963,10 +966,7 @@ else:
         print("\n FF times (a_F, d_F, w_F):")
         for k in K_trucks:
             for f in FFs.keys():
-                visited_ff = any(
-                    val(x[j, i, k]) > 0.5
-                    for i in FFs[f] for j in All_Nodes if (j, i) in Edges and j not in FFs[f]
-                )
+                visited_ff = route_visits_facility(routes.get(k, []), FFs[f])
                 a_f_str = f"{val(a_F[k, f]):.2f}" if visited_ff else "NaN"
                 d_f_str = f"{val(d_F[k, f]):.2f}" if visited_ff else "NaN"
                 print(f"  k={k}, FF={f}: a_F={a_f_str}, d_F={d_f_str}, w_F={val(w_F[k,f]):.2f}")
@@ -1076,18 +1076,6 @@ else:
             w_d_vals={(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
             w_g_vals={(k, g): val(w_G[k, g]) for k in K_trucks for g in GHs.keys()},
             tau_end_vals={k: val(tau_end[k]) for k in K_trucks},
-        )
-        
-        served_pickups = [
-            i for i in Nodes_P
-            if any(val(x[j, i, k]) > 0.5 for k in K_trucks for j in All_Nodes if (j, i) in Edges)
-        ]
-
-        plot_ff_gh_flow_matrix(
-            served_pickups=served_pickups,
-            n_pickups=n_uld,
-            ff_nodes=FFs,
-            gh_nodes=GHs,
         )
     
 
