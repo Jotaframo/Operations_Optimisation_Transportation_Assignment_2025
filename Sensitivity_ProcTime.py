@@ -1,4 +1,3 @@
-# Loading packages that are used in the code
 import numpy as np
 import os
 import pandas as pd
@@ -7,6 +6,8 @@ import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
 from typing import Dict, List
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 # Get path to current folder
 cwd = os.getcwd()
@@ -16,22 +17,6 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def out_path(filename: str) -> str:
     return os.path.join(RESULTS_DIR, filename)
-
-
-def annotate_heatmap_cells(ax, data, fmt: str = "{:.1f}"):
-    max_val = np.nanmax(data) if data.size > 0 else 0
-    thresh = max_val / 2 if max_val and not np.isnan(max_val) else 0
-    n_rows, n_cols = data.shape
-    for i in range(n_rows):
-        for j in range(n_cols):
-            v = data[i, j]
-            if np.isnan(v):
-                label = "-"
-                color = "black"
-            else:
-                label = fmt.format(v)
-                color = "white" if v > thresh else "black"
-            ax.text(j, i, label, ha='center', va='center', fontsize=9, color=color)
 
 
 # Constants that will not change between runs
@@ -115,6 +100,18 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
             )
     ax.scatter([], [], c="#1f77b4", s=60, marker="o", label="FF")
     ax.scatter([], [], c="#ff7f0e", s=60, marker="^", label="GH")
+    
+    # Calculate unique curvatures for each truck
+    used_truck_ids = sorted(k for k, route in routes.items() if len(route) >= 2)
+    min_rad, max_rad = 0.07, 0.13
+    precision = 10000
+    rad_pool = list(range(int(min_rad * precision), int(max_rad * precision) + 1))
+    picked_rads = random.sample(rad_pool, len(used_truck_ids)) if len(used_truck_ids) > 0 else []
+    truck_curvature = {
+        truck_id: rad_int / precision
+        for truck_id, rad_int in zip(used_truck_ids, picked_rads)
+    }
+    
     colors = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     for idx, (k, route) in enumerate(routes.items()):
         if len(route) < 2:
@@ -125,8 +122,9 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
         )
         xs = [node_coords[i][1] for i in route]
         ys = [node_coords[i][0] for i in route]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.5)
+        ax.plot([], [], color=color, linewidth=2, label=f"Truck {k} ({route_distance_km:.2f} km)", alpha=0.8)
         ax.scatter(xs, ys, color=color, s=30)
+        rad = truck_curvature.get(k, 0.09)
         for start_idx in range(len(route) - 1):
             x0, y0 = node_coords[route[start_idx]][1], node_coords[route[start_idx]][0]
             x1, y1 = node_coords[route[start_idx + 1]][1], node_coords[route[start_idx + 1]][0]
@@ -134,7 +132,15 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
                 "",
                 xy=(x1, y1),
                 xytext=(x0, y0),
-                arrowprops=dict(arrowstyle="->", color=color, lw=1.5, shrinkA=6, shrinkB=6),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color=color,
+                    lw=1.8,
+                    shrinkA=6,
+                    shrinkB=6,
+                    connectionstyle=f"arc3,rad={rad}",
+                    alpha=0.9,
+                ),
             )
     ax.set_title("Truck Routes (FFs/GHs)")
     ax.set_xlabel("Longitude")
@@ -510,9 +516,418 @@ def solve_case(proc_time: float, case_label: str, return_routes: bool = False) -
     return result
 
 
-def main():
+def solve_case_with_timeline_data(proc_time: float, case_label: str) -> dict:
+    """Build & solve model for given processing time, returning full timeline data for plotting."""
+    # Build processing time dictionary with variable value
+    P = {i: (proc_time if i != 0 else 0) for i in All_Nodes}
+    
+    m = gp.Model(f"GHDC-PDPTW_ProcTime_{case_label}")
+    m.setParam('OutputFlag', 0)  # suppress solver output
+
+    # variables
+    x = m.addVars(Edges, K_trucks, vtype=GRB.BINARY, name="x")
+    tau = m.addVars(All_Nodes, vtype=GRB.CONTINUOUS, name="tau")
+    tau_end = m.addVars(K_trucks, vtype=GRB.CONTINUOUS, name="tau_end")
+    a_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="a_F")
+    d_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="d_F")
+    a_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="a_G")
+    d_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="d_G")
+    w_D = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="w_D")
+    w_F = m.addVars(K_trucks, FFs.keys(), vtype=GRB.CONTINUOUS, name="w_F")
+    w_G = m.addVars(K_trucks, GHs.keys(), vtype=GRB.CONTINUOUS, name="w_G")
+    eta = m.addVars(K_trucks, K_trucks, GHs.keys(), vtype=GRB.BINARY, name="eta")
+    y = m.addVars(K_trucks, Docks, GHs.keys(), vtype=GRB.BINARY, name="y")
+    z = m.addVars(K_trucks, Docks, K_trucks, Docks, GHs.keys(), vtype=GRB.CONTINUOUS, lb=0, ub=1, name="z")
+
+    # objective components
+    travel_cost = gp.quicksum(T[i, j] * x[i, j, k]
+                              for k in K_trucks
+                              for i, j in Edges)
+    wait_gh_dock_cost = gp.quicksum(w_D[k, g]
+                                    for k in K_trucks
+                                    for g in GHs.keys())
+    wait_gh_service_cost = gp.quicksum(w_G[k, g]
+                                       for k in K_trucks
+                                       for g in GHs.keys())
+    wait_ff_cost = gp.quicksum(w_F[k, f]
+                               for k in K_trucks
+                               for f in FFs.keys())
+    m.setObjective(travel_cost + wait_gh_dock_cost + wait_gh_service_cost + wait_ff_cost, GRB.MINIMIZE)
+
+    depot = 0
+    # [2]
+    for i in Nodes_P:
+        m.addConstr(
+            gp.quicksum(x[j, i, k]
+                     for k in K_trucks
+                     for j in All_Nodes
+                     if (j, i) in Edges) == 1)
+    # [3]
+    n = len(Nodes_P)
+    for k in K_trucks:
+        for i in Nodes_P:
+            delivery = i + n
+            m.addConstr(
+                gp.quicksum(x[j, i, k] for j in All_Nodes if (j, i) in Edges) -
+                gp.quicksum(x[j, delivery, k] for j in All_Nodes if (j, delivery) in Edges)
+                == 0)
+    # [4]
+    for k in K_trucks:
+        m.addConstr(
+            gp.quicksum(x[depot, i, k] for i in All_Nodes if (depot, i) in Edges) <= 1)
+    # [5]
+    for k in K_trucks:
+        for i in All_Nodes:
+            m.addConstr(
+                gp.quicksum(x[j, i, k] for j in All_Nodes if (j, i) in Edges) -
+                gp.quicksum(x[i, j, k] for j in All_Nodes if (i, j) in Edges) == 0)
+    # [6]
+    for k in K_trucks:
+        for i in Nodes_P:
+            m.addConstr(x[depot, i, k] - x[i + n, depot, k] == 0)
+    # [7]
+    for k in K_trucks:
+        for (i, j) in Edges:
+            if i in Nodes_P and j in Nodes_P:
+                m.addConstr(x[i, j, k] - x[j + n, i + n, k] == 0)
+    # [8] and [9]
+    for k in K_trucks:
+        for f in FFs:
+            m.addConstr(
+                gp.quicksum(
+                    x[j, i, k]
+                    for i in FFs[f]
+                    for j in All_Nodes
+                    if (j, i) in Edges and (j not in FFs[f]) and j != 0
+                )
+                + gp.quicksum(
+                    x[0, i, k] for i in FFs[f] if (0, i) in Edges
+                )
+                <= 1)
+        for g in GHs:
+            m.addConstr(
+                gp.quicksum(
+                    x[j, i, k]
+                    for i in GHs[g]
+                    for j in All_Nodes
+                    if (j, i) in Edges and (j not in GHs[g]) and j != 0
+                )
+                + gp.quicksum(
+                    x[0, i, k] for i in GHs[g] if (0, i) in Edges
+                )
+                <= 1)
+    # [10–14]
+    for (i, j) in Edges:
+        if j in Nodes_P:
+            m.addConstr(
+                tau[j] >= tau[i] + P[i] + T[i, j]
+                          - M * (1 - gp.quicksum(x[i, j, k] for k in K_trucks)))
+    for g in GHs:
+        nodes_g = GHs[g]
+        for k in K_trucks:
+            for (i, j) in Edges:
+                if j in nodes_g and i not in nodes_g and j in Nodes_D:
+                    m.addConstr(
+                        tau[j] >= tau[i] + P[i] + T[i, j] - M * (1 - x[i, j, k]) + w_D[k, g])
+    for g, nodes in GHs.items():
+        for i in nodes:
+            for j in nodes:
+                if i != j and (i, j) in Edges:
+                    expr = gp.quicksum(x[i, j, k] for k in K_trucks)
+                    m.addConstr(tau[j] >= tau[i] + P[i] + T[i, j] - (1 - expr) * M)
+    for k in K_trucks:
+        for i in All_Nodes:
+            if i != 0 and (i, 0) in Edges:
+                m.addConstr(
+                    tau_end[k] >= tau[i] + P[i] + T[i, 0] - (1 - x[i, 0, k]) * M)
+    for i in Nodes_P + Nodes_D:
+        m.addConstr(tau[i] >= E_win[i])
+        m.addConstr(tau[i] <= D_win[i])
+    # [15–16] capacity constraints (fixed truck capacities)
+    for k in K_trucks:
+        load_expr = gp.quicksum(W[i] * x[j, i, k]
+                                for i in All_Nodes
+                                for j in All_Nodes if (j, i) in Edges)
+        m.addConstr(load_expr <= Cap_W)
+        len_expr = gp.quicksum(L[i] * x[j, i, k]
+                               for i in All_Nodes
+                               for j in All_Nodes if (j, i) in Edges)
+        m.addConstr(len_expr <= Cap_L)
+    # (17 & 18) Facility Arrival Time (a_F)
+    for f, f_nodes in FFs.items():
+        for k in K_trucks:
+            for i, j in Edges:
+                if j in f_nodes and i not in f_nodes:
+                    m.addConstr(a_F[k,f] >= tau[i] + P[i] + T[i,j] - (1 - x[i,j,k])*M)
+                    m.addConstr(a_F[k,f] <= tau[i] + P[i] + T[i,j] + (1 - x[i,j,k])*M)
+
+    # (19 & 20) Facility Departure Time (d_F)
+    for f, f_nodes in FFs.items():
+        for k in K_trucks:
+            for i, j in Edges:
+                if i in f_nodes and j not in f_nodes:
+                    m.addConstr(d_F[k,f] >= tau[i] + P[i] - (1 - x[i,j,k])*M)
+                    m.addConstr(d_F[k,f] <= tau[i] + P[i] + (1 - x[i,j,k])*M)
+
+    # (21 & 22) Group Arrival Time (a_G)
+    for g, g_nodes in GHs.items():
+        for k in K_trucks:
+            for i, j in Edges:
+                if j in g_nodes and i not in g_nodes:
+                    m.addConstr(a_G[k,g] >= tau[i] + P[i] + T[i,j] - (1 - x[i,j,k])*M)
+                    m.addConstr(a_G[k,g] <= tau[i] + P[i] + T[i,j] + (1 - x[i,j,k])*M)
+
+    # (23 & 24) Departure time from GH 
+    for g in GHs:
+        for k in K_trucks:
+            for i in GHs[g]:
+                for j in All_Nodes:
+                    if j not in GHs[g] and (i,j) in Edges:
+                        m.addConstr(d_G[k, g] >= tau[i] + P[i] - (1 - x[i, j, k]) * M)
+                        m.addConstr(d_G[k, g] <= tau[i] + P[i] + (1 - x[i, j, k]) * M)
+
+    # [25] Waiting time at FF
+    for f in FFs:
+        for k in K_trucks:
+            proc_sum = gp.quicksum(P[i] * x[j, i, k] for i in FFs[f] for j in All_Nodes if (j, i) in Edges)
+            m.addConstr(w_F[k, f] >= d_F[k, f] - a_F[k, f] - proc_sum)
+
+    # [26] Waiting time at GH
+    for g in GHs:
+        for k in K_trucks:
+            proc_sum = gp.quicksum(P[i] * x[j, i, k] for i in GHs[g] for j in All_Nodes if (j, i) in Edges)
+            m.addConstr(w_G[k, g] >= d_G[k, g] - a_G[k, g] - w_D[k, g] - proc_sum)
+
+    # [27] Overlap variable definition (Lower Bound)
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                m.addConstr(d_G[k1, g] - a_G[k2, g] - w_D[k2, g] + M * eta[k1, k2, g] <= M)
+
+    # [28] Overlap variable definition (Upper Bound)
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                m.addConstr(-d_G[k1, g] + a_G[k2, g] + w_D[k2, g] - M * eta[k1, k2, g] <= 0)
+
+    # [29] Dock Assignment Constraint
+    for g in GHs:
+        for k in K_trucks:
+            visit_from_outside = gp.quicksum(
+                x[j, i, k] for i in GHs[g] for j in All_Nodes
+                if (j, i) in Edges and (j not in GHs[g])
+            )
+            m.addConstr(gp.quicksum(y[k, d, g] for d in Docks) == visit_from_outside)
+
+    # [30] Linearization of z (Part 1)
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 < k2:
+                    for d1 in Docks:
+                        for d2 in Docks:
+                            m.addConstr(z[k1, d1, k2, d2, g] <= y[k1, d1, g])
+
+    # [31] Linearization of z (Part 2)
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 < k2:
+                    for d1 in Docks:
+                        for d2 in Docks:
+                            m.addConstr(z[k1, d1, k2, d2, g] <= y[k2, d2, g])
+
+    # [32] Linearization of z (Part 3)
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 < k2:
+                    for d1 in Docks:
+                        for d2 in Docks:
+                            m.addConstr(y[k1, d1, g] + y[k2, d2, g] - 1 <= z[k1, d1, k2, d2, g])
+
+    # [33] Dock Capacity / Non-overlap constraint
+    for g in GHs:
+        for k1 in K_trucks:
+            for k2 in K_trucks:
+                if k1 < k2:
+                    for d1 in Docks:
+                        m.addConstr(z[k1, d1, k2, d1, g] <= eta[k1, k2, g] + eta[k2, k1, g])
+
+    m.update()
+    m.optimize()
+
+    def val(v):
+        try:
+            return float(v.X)
+        except:
+            return float(v)
+
+    has_solution = m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL] and m.SolCount > 0
+    
+    if not has_solution:
+        return {'feasible': False}
+
+    # Extract routes
+    routes = {}
+    trucks_used = []
+    for k in K_trucks:
+        used_arcs = [(i, j) for (i, j) in Edges if val(x[i, j, k]) > 0.5]
+        if used_arcs:
+            trucks_used.append(k)
+            succ = {i: j for i, j in used_arcs}
+            route = [0]
+            current = 0
+            seen = {0}
+            while current in succ:
+                nxt = succ[current]
+                route.append(nxt)
+                if nxt == 0 or nxt in seen:
+                    break
+                seen.add(nxt)
+                current = nxt
+            routes[k] = route
+
+    # Extract all timeline data
+    return {
+        'feasible': True,
+        'routes': routes,
+        'trucks': trucks_used,
+        'travel_time': T,
+        'tau_vals': {i: val(tau[i]) for i in All_Nodes},
+        'proc_times': P,
+        'nodes_p': Nodes_P,
+        'ff_nodes': FFs,
+        'a_f_vals': {(k, f): val(a_F[k, f]) for k in K_trucks for f in FFs.keys()},
+        'd_f_vals': {(k, f): val(d_F[k, f]) for k in K_trucks for f in FFs.keys()},
+        'w_f_vals': {(k, f): val(w_F[k, f]) for k in K_trucks for f in FFs.keys()},
+        'gh_nodes': GHs,
+        'a_g_vals': {(k, g): val(a_G[k, g]) for k in K_trucks for g in GHs.keys()},
+        'd_g_vals': {(k, g): val(d_G[k, g]) for k in K_trucks for g in GHs.keys()},
+        'w_d_vals': {(k, g): val(w_D[k, g]) for k in K_trucks for g in GHs.keys()},
+        'w_g_vals': {(k, g): val(w_G[k, g]) for k in K_trucks for g in GHs.keys()},
+        'tau_end_vals': {k: val(tau_end[k]) for k in K_trucks},
+        'obj': m.objVal,
+    }
+
+
+def plot_truck_timeline_gantt(
+    routes: Dict[int, List[int]],
+    trucks: List[int],
+    travel_time: Dict,
+    tau_vals: Dict[int, float],
+    proc_times: Dict[int, float],
+    nodes_p: List[int],
+    ff_nodes: Dict[int, List[int]],
+    a_f_vals: Dict,
+    d_f_vals: Dict,
+    w_f_vals: Dict,
+    gh_nodes: Dict[int, List[int]],
+    a_g_vals: Dict,
+    d_g_vals: Dict,
+    w_d_vals: Dict,
+    w_g_vals: Dict,
+    tau_end_vals: Dict[int, float],
+    output_path: str = "truck_timeline.png",
+):
     import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator
+    
+    fig_height = max(4, 1.2 * len(trucks) + 2)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+
+    phase_colors = {
+        "travel": "#1f77b4",
+        "ff_service": "#2ca02c",
+        "ff_wait": "#17becf",
+        "gh_queue": "#ff7f0e",
+        "gh_wait": "#bcbd22",
+        "gh_service": "#9467bd",
+        "return": "#7f7f7f",
+    }
+    phase_labels = {
+        "travel": "Travel",
+        "ff_service": "Service at FF",
+        "ff_wait": "Waiting at FF",
+        "gh_queue": "Queue at GH",
+        "gh_wait": "Waiting at GH dock",
+        "gh_service": "Service at GH dock",
+        "return": "Return",
+    }
+
+    used_labels = set()
+    eps = 1e-6
+
+    def add_phase_bar(y_pos, start, duration, phase):
+        if duration <= eps:
+            return
+        label = phase_labels[phase] if phase not in used_labels else None
+        if label is not None:
+            used_labels.add(phase)
+        ax.barh(
+            y=y_pos,
+            width=duration,
+            left=start,
+            height=0.62,
+            color=phase_colors[phase],
+            edgecolor="white",
+            linewidth=0.5,
+            alpha=0.9,
+            label=label,
+        )
+
+    for row, k in enumerate(trucks):
+        route = routes.get(k, [])
+
+        if len(route) >= 2:
+            for pos in range(len(route) - 1):
+                i = route[pos]
+                j = route[pos + 1]
+                travel_start = tau_vals.get(0, 0.0) if i == 0 else tau_vals.get(i, 0.0) + proc_times.get(i, 0.0)
+                travel_duration = travel_time.get((i, j), 0.0)
+                phase = "return" if j == 0 else "travel"
+                add_phase_bar(row, travel_start, travel_duration, phase)
+
+            for node in route:
+                if node in nodes_p:
+                    add_phase_bar(row, tau_vals.get(node, 0.0), proc_times.get(node, 0.0), "ff_service")
+
+        for f in ff_nodes.keys():
+            arr_f = a_f_vals.get((k, f), 0.0)
+            dep_f = d_f_vals.get((k, f), 0.0)
+            ff_wait = max(0.0, w_f_vals.get((k, f), 0.0))
+            if dep_f > arr_f + eps and ff_wait > eps:
+                ff_wait_start = max(arr_f, dep_f - ff_wait)
+                add_phase_bar(row, ff_wait_start, min(ff_wait, dep_f - ff_wait_start), "ff_wait")
+
+        for g in gh_nodes.keys():
+            arr = a_g_vals.get((k, g), 0.0)
+            dep = d_g_vals.get((k, g), 0.0)
+            queue = max(0.0, w_d_vals.get((k, g), 0.0))
+            dock_start = arr + queue
+            dock_duration = max(0.0, dep - dock_start)
+            gh_wait = min(max(0.0, w_g_vals.get((k, g), 0.0)), dock_duration)
+            gh_service = max(0.0, dock_duration - gh_wait)
+
+            add_phase_bar(row, arr, queue, "gh_queue")
+            add_phase_bar(row, dock_start, gh_wait, "gh_wait")
+            add_phase_bar(row, dock_start + gh_wait, gh_service, "gh_service")
+
+    max_end = max([tau_end_vals.get(k, 0.0) for k in trucks] + [1.0])
+    ax.set_xlim(0, max_end * 1.05)
+    ax.set_ylim(-0.8, len(trucks) - 0.2)
+    ax.set_yticks(range(len(trucks)))
+    ax.set_yticklabels([f"Truck {k}" for k in trucks])
+    ax.set_xlabel("Time [min]")
+    ax.set_title("Truck Timeline")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.35)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    print(f"Truck timeline Gantt saved to: {output_path}")
+    plt.close(fig)
+
+
+def main():
 
     # Case 1: vary processing time with fixed other parameters
     proc_times_case1 = list(range(5, 110, 10))
@@ -601,6 +1016,42 @@ def main():
     fig.tight_layout()
     fig.savefig(out_path('proctime_case1_trucks.png'))
     plt.close(fig)
+
+    # Generate route visualizations for critical scenarios (85, 95, 105 min)
+    critical_scenarios = [85, 95, 105]
+    for ptime in critical_scenarios:
+        scenario = f"case1_proctime{ptime}"
+        print(f"proctime generating route plot for {scenario}")
+        res = solve_case(ptime, scenario, return_routes=True)
+        if res['feasible'] and 'routes' in res:
+            plot_routes(res['routes'], node_loc_maps, FFs, GHs, output_path=out_path(f'proctime_{ptime}_routes.png'))
+
+    # Generate timeline plots for 95 and 105 min scenarios to show waiting patterns
+    timeline_scenarios = [95, 105]
+    for ptime in timeline_scenarios:
+        scenario = f"case1_proctime{ptime}_timeline"
+        print(f"proctime generating timeline plot for {ptime} min")
+        timeline_data = solve_case_with_timeline_data(ptime, scenario)
+        if timeline_data['feasible']:
+            plot_truck_timeline_gantt(
+                routes=timeline_data['routes'],
+                trucks=timeline_data['trucks'],
+                travel_time=timeline_data['travel_time'],
+                tau_vals=timeline_data['tau_vals'],
+                proc_times=timeline_data['proc_times'],
+                nodes_p=timeline_data['nodes_p'],
+                ff_nodes=timeline_data['ff_nodes'],
+                a_f_vals=timeline_data['a_f_vals'],
+                d_f_vals=timeline_data['d_f_vals'],
+                w_f_vals=timeline_data['w_f_vals'],
+                gh_nodes=timeline_data['gh_nodes'],
+                a_g_vals=timeline_data['a_g_vals'],
+                d_g_vals=timeline_data['d_g_vals'],
+                w_d_vals=timeline_data['w_d_vals'],
+                w_g_vals=timeline_data['w_g_vals'],
+                tau_end_vals=timeline_data['tau_end_vals'],
+                output_path=out_path(f'proctime_{ptime}_timeline.png')
+            )
 
 
     # Final compact report

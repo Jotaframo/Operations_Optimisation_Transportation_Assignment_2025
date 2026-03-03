@@ -7,6 +7,8 @@ import gurobipy as gp
 from math import radians, cos, sin, asin, sqrt
 import random
 from typing import Dict, List, Tuple
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 # Get path to current folder
 cwd = os.getcwd()
@@ -17,21 +19,6 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 def out_path(filename: str) -> str:
     return os.path.join(RESULTS_DIR, filename)
 
-
-def annotate_heatmap_cells(ax, data, fmt: str = "{:.1f}"):
-    max_val = np.nanmax(data) if data.size > 0 else 0
-    thresh = max_val / 2 if max_val and not np.isnan(max_val) else 0
-    n_rows, n_cols = data.shape
-    for i in range(n_rows):
-        for j in range(n_cols):
-            v = data[i, j]
-            if np.isnan(v):
-                label = "-"
-                color = "black"
-            else:
-                label = fmt.format(v)
-                color = "white" if v > thresh else "black"
-            ax.text(j, i, label, ha='center', va='center', fontsize=9, color=color)
 
 # Constants that will not change between runs
 M = 10000  # Big M for time constraints
@@ -109,6 +96,23 @@ def plot_routes(routes: Dict[int, List[int]], node_coords: List[List[float]], ff
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Route plot saved to: {output_path}")
+
+
+def annotate_heatmap_cells(ax, data, fmt: str = "{:.1f}"):
+    max_val = np.nanmax(data) if data.size > 0 else 0
+    thresh = max_val / 2 if max_val and not np.isnan(max_val) else 0
+    n_rows, n_cols = data.shape
+    for i in range(n_rows):
+        for j in range(n_cols):
+            v = data[i, j]
+            if np.isnan(v):
+                label = "-"
+                color = "black"
+            else:
+                label = fmt.format(v)
+                color = "white" if v > thresh else "black"
+            ax.text(j, i, label, ha='center', va='center', fontsize=9, color=color)
+
 
 # build static topology
 Nodes_P = list(range(1, n_uld + 1))
@@ -522,8 +526,6 @@ def solve_case(tight_proportion: float, window_width: float, case_label: str, se
 
 
 def main():
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator
 
     widths_case_1 = [30, 50, 70, 90, 110, 140]
     props_case_2 = [round(x, 1) for x in np.arange(0.1, 1.0, 0.1)]
@@ -558,9 +560,9 @@ def main():
             cap_records.append({'scenario': scenario, 'truck': k, 'weight': usage['weight'], 'length': usage['length'], 'window_width': fixed_width, 'tight_proportion': prop})
 
     # Extra analysis: compact interaction grid to see combined effect of both dimensions
-    extra_props = [0.2, 0.5, 0.8]
-    extra_widths = [50, 90, 130]
-    print("\ntightwin=== EXTRA: interaction mini-grid ===")
+    extra_props = [0.3, 0.6, 0.9]
+    extra_widths = [30, 90, 140]
+    print("\ntightwin=== EXTRA: interaction mini-grid (improved ranges) ===")
     for prop in extra_props:
         for width in extra_widths:
             scenario = f"extra_prop{prop}_width{width}"
@@ -715,49 +717,55 @@ def main():
         fig.savefig(out_path('tightwin_extra_trucks_heatmap.png'))
         plt.close(fig)
 
-        # Waiting-time component heatmaps (extra case)
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
+        # Individual heatmaps for waiting time components (separate plots)
         wait_components = [
-            ('wait_gh_dock', 'GH pre-dock wait'),
-            ('wait_gh_service', 'GH dock wait'),
-            ('wait_ff', 'FF wait'),
+            ('wait_gh_dock', 'GH pre-dock wait (min)', 'YlGnBu'),
+            ('wait_gh_service', 'GH dock wait (min)', 'YlOrRd'),
+            ('wait_ff', 'FF wait (min)', 'BuGn'),
         ]
-        for ax, (col, title) in zip(axes, wait_components):
+        for col, title, cmap in wait_components:
             heat_comp = feasible_extra.pivot_table(index='tight_proportion', columns='window_width', values=col, aggfunc='mean')
-            im = ax.imshow(heat_comp.values, aspect='auto', cmap='YlGnBu')
+            fig, ax = plt.subplots(figsize=(8, 5))
+            im = ax.imshow(heat_comp.values, aspect='auto', cmap=cmap)
             ax.set_xticks(range(len(heat_comp.columns)))
             ax.set_xticklabels([str(int(c)) for c in heat_comp.columns])
             ax.set_yticks(range(len(heat_comp.index)))
             ax.set_yticklabels([f"{p:.1f}" for p in heat_comp.index])
-            ax.set_xlabel('Width (min)')
-            ax.set_ylabel('Proportion')
+            ax.set_xlabel('Window width (min)')
+            ax.set_ylabel('Tightened-node proportion')
+            ax.set_title(title)
             annotate_heatmap_cells(ax, heat_comp.values, fmt="{:.1f}")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        fig.tight_layout()
-        fig.savefig(out_path('tightwin_extra_wait_components_heatmaps.png'))
-        plt.close(fig)
+            cbar = fig.colorbar(im, ax=ax)
+            cbar.set_label('Minutes')
+            fig.tight_layout()
+            fname = col.replace('wait_', '').replace('_', '')
+            fig.savefig(out_path(f'tightwin_extra_{fname}_heatmap.png'))
+            plt.close(fig)
 
-        # Objective composition heatmaps (travel, total wait, objective)
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
+        # Individual heatmaps for objective composition (separate plots)
         comp_cols = [
-            ('travel', 'Travel'),
-            ('total_wait', 'Total wait'),
-            ('obj', 'Objective (travel + wait)'),
+            ('travel', 'Travel time (min)', 'Blues'),
+            ('total_wait', 'Total waiting time (min)', 'Oranges'),
+            ('obj', 'Objective (travel + wait, min)', 'Reds'),
         ]
-        for ax, (col, title) in zip(axes, comp_cols):
+        for col, title, cmap in comp_cols:
             heat_comp = feasible_extra.pivot_table(index='tight_proportion', columns='window_width', values=col, aggfunc='mean')
-            im = ax.imshow(heat_comp.values, aspect='auto', cmap='OrRd')
+            fig, ax = plt.subplots(figsize=(8, 5))
+            im = ax.imshow(heat_comp.values, aspect='auto', cmap=cmap)
             ax.set_xticks(range(len(heat_comp.columns)))
             ax.set_xticklabels([str(int(c)) for c in heat_comp.columns])
             ax.set_yticks(range(len(heat_comp.index)))
             ax.set_yticklabels([f"{p:.1f}" for p in heat_comp.index])
-            ax.set_xlabel('Width (min)')
-            ax.set_ylabel('Proportion')
+            ax.set_xlabel('Window width (min)')
+            ax.set_ylabel('Tightened-node proportion')
+            ax.set_title(title)
             annotate_heatmap_cells(ax, heat_comp.values, fmt="{:.1f}")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        fig.tight_layout()
-        fig.savefig(out_path('tightwin_extra_obj_composition_heatmaps.png'))
-        plt.close(fig)
+            cbar = fig.colorbar(im, ax=ax)
+            cbar.set_label('Minutes')
+            fig.tight_layout()
+            fname = col.replace('_', '')
+            fig.savefig(out_path(f'tightwin_extra_{fname}_heatmap.png'))
+            plt.close(fig)
 
         heat = feasible_extra.pivot_table(index='tight_proportion', columns='window_width', values='wait_share_pct', aggfunc='mean')
         fig, ax = plt.subplots(figsize=(8, 5))
