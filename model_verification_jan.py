@@ -361,8 +361,12 @@ for k in K_trucks:
 # (14) Time Windows
 # Hard constraints on Earliest and Latest service times
 for i in Nodes_P + Nodes_D:
-    m.addConstr(tau[i] >= E_win[i], name=f"Eq14_TW_LB_{i}")
-    m.addConstr(tau[i] <= D_win[i], name=f"Eq14_TW_UB_{i}")
+    if i == 4:
+        m.addConstr(tau[i] >= 200, name=f"Eq14_TW_LB_{i}")
+        m.addConstr(tau[i] <= 350, name=f"Eq14_TW_UB_{i}")
+    else:
+        m.addConstr(tau[i] >= E_win[i], name=f"Eq14_TW_LB_{i}")
+        m.addConstr(tau[i] <= D_win[i], name=f"Eq14_TW_UB_{i}")
 
 # (15) Weight Capacity
 # Total weight of Pickups visited by truck k must not exceed Q_W

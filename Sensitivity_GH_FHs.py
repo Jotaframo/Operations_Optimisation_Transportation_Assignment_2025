@@ -70,7 +70,6 @@ def build_route_from_successors(successors: Dict[int, int], start_node: int, max
         cur = nxt
     return route
 
-
 def route_visits_facility(route: List[int], facility_nodes: List[int]) -> bool:
     facility_node_set = set(facility_nodes)
     return any(node in facility_node_set for node in route)
